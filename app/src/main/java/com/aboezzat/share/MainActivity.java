@@ -18,7 +18,6 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ImageButton;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -47,12 +46,10 @@ public class MainActivity extends Activity {
     private TextView txtNavHome, txtNavBrowser, txtNavSettings, tvConnectedIpDisplay;
     private EditText etTvIpSettings, etTvPortSettings;
 
-    // عناصر المتصفح
     private WebView mainWebView;
     private EditText etBrowserUrl;
     private ProgressBar browserProgress;
 
-    // سيرفر بث الملفات المحلية من الهاتف
     private LocalMediaServer localServer;
     private File currentServedFile = null;
     private static final int LOCAL_SERVER_PORT = 8899;
@@ -101,7 +98,6 @@ public class MainActivity extends Activity {
         etTvPortSettings.setText(savedPort);
     }
 
-    // التنقل بين الأقسام الثلاثة
     private void setupNavigation() {
         findViewById(R.id.navHome).setOnClickListener(v -> switchTab(0));
         findViewById(R.id.navBrowser).setOnClickListener(v -> switchTab(1));
@@ -119,7 +115,6 @@ public class MainActivity extends Activity {
         txtNavSettings.setTextColor(index == 2 ? 0xFF38EF7D : 0xFF667085);
     }
 
-    // إعدادات أزرار البث والريموت
     private void setupHomeActions() {
         findViewById(R.id.btnPickVideo).setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
@@ -160,12 +155,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    // إعدادات المتصفح وزر العودة للرئيسية
     private void setupBrowser() {
         mainWebView = findViewById(R.id.mainWebView);
         etBrowserUrl = findViewById(R.id.etBrowserUrl);
         browserProgress = findViewById(R.id.browserProgress);
-        ImageButton btnBrowserHome = findViewById(R.id.btnBrowserHome);
+        Button btnBrowserHome = findViewById(R.id.btnBrowserHome);
         Button btnBrowserGo = findViewById(R.id.btnBrowserGo);
 
         WebSettings ws = mainWebView.getSettings();
@@ -226,7 +220,6 @@ public class MainActivity extends Activity {
         mainWebView.loadUrl(url);
     }
 
-    // إعدادات الـ IP وقفل الكيبورد التلقائي
     private void setupSettings() {
         Button btnSave = findViewById(R.id.btnSaveSettings);
 
