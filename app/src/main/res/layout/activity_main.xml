@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -41,7 +40,7 @@
                     android:id="@+id/tvConnectedIpDisplay"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="متصل بـ: 10.229.144.16"
+                    android:text="متصل بالشاشة: 10.229.144.16:1997"
                     android:textColor="#38EF7D"
                     android:textSize="13sp"
                     android:layout_marginBottom="24dp" />
@@ -51,7 +50,6 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:background="@android:color/transparent"
                     android:layout_marginBottom="20dp">
 
                     <Button
@@ -62,7 +60,7 @@
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:backgroundTint="#1F2430"
+                        android:background="#1F2430"
                         android:layout_marginBottom="12dp" />
 
                     <Button
@@ -73,7 +71,7 @@
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:backgroundTint="#1F2430"
+                        android:background="#1F2430"
                         android:layout_marginBottom="12dp" />
 
                     <Button
@@ -84,7 +82,7 @@
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
                         android:textStyle="bold"
-                        android:backgroundTint="#1F2430" />
+                        android:background="#1F2430" />
                 </LinearLayout>
 
                 <!-- ريموت كنترول الشاشة -->
@@ -110,8 +108,8 @@
                         android:layout_weight="1"
                         android:text="⏪ 10ث"
                         android:textColor="#FFFFFF"
-                        android:backgroundTint="#181C26"
-                        android:layout_marginEnd="8dp" />
+                        android:background="#181C26"
+                        android:layout_marginRight="8dp" />
 
                     <Button
                         android:id="@+id/btnPlayPause"
@@ -119,10 +117,10 @@
                         android:layout_height="52dp"
                         android:layout_weight="1.2"
                         android:text="⏯ تشغيل/إيقاف"
-                        android:textColor="#111"
+                        android:textColor="#111111"
                         android:textStyle="bold"
-                        android:backgroundTint="#38EF7D"
-                        android:layout_marginEnd="8dp" />
+                        android:background="#38EF7D"
+                        android:layout_marginRight="8dp" />
 
                     <Button
                         android:id="@+id/btnForward"
@@ -131,7 +129,7 @@
                         android:layout_weight="1"
                         android:text="10ث ⏩"
                         android:textColor="#FFFFFF"
-                        android:backgroundTint="#181C26" />
+                        android:background="#181C26" />
                 </LinearLayout>
 
                 <Button
@@ -140,7 +138,7 @@
                     android:layout_height="48dp"
                     android:text="⏹ إنهاء العرض والعودة للواجهة"
                     android:textColor="#FF5252"
-                    android:backgroundTint="#24141E" />
+                    android:background="#24141E" />
 
             </LinearLayout>
         </ScrollView>
@@ -153,23 +151,24 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <!-- شريط علوي أنيق للتحكم في المتصفح والرجوع للرئيسية -->
+            <!-- شريط علوي للتحكم في المتصفح والرجوع للرئيسية -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="54dp"
                 android:orientation="horizontal"
                 android:background="#161922"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="10dp">
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp">
 
-                <ImageButton
+                <Button
                     android:id="@+id/btnBrowserHome"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:src="@android:drawable/ic_menu_revert"
-                    android:tint="#38EF7D"
-                    android:contentDescription="الرئيسية" />
+                    android:layout_width="48dp"
+                    android:layout_height="40dp"
+                    android:text="🏠"
+                    android:textSize="18sp"
+                    android:textColor="#38EF7D"
+                    android:background="#222836" />
 
                 <EditText
                     android:id="@+id/etBrowserUrl"
@@ -179,12 +178,14 @@
                     android:background="#0F1118"
                     android:textColor="#FFFFFF"
                     android:textSize="13sp"
-                    android:paddingHorizontal="12dp"
+                    android:paddingLeft="12dp"
+                    android:paddingRight="12dp"
                     android:hint="أدخل الرابط أو ابحث..."
                     android:textColorHint="#5E687A"
                     android:inputType="textUri"
                     android:imeOptions="actionGo"
-                    android:layout_marginHorizontal="8dp" />
+                    android:layout_marginLeft="8dp"
+                    android:layout_marginRight="8dp" />
 
                 <Button
                     android:id="@+id/btnBrowserGo"
@@ -193,7 +194,7 @@
                     android:text="ذهاب"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
-                    android:backgroundTint="#2A3142" />
+                    android:background="#2A3142" />
             </LinearLayout>
 
             <ProgressBar
@@ -201,8 +202,7 @@
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="3dp"
-                android:visibility="gone"
-                android:progressTint="#38EF7D" />
+                android:visibility="gone" />
 
             <WebView
                 android:id="@+id/mainWebView"
@@ -256,7 +256,8 @@
                     android:textColor="#38EF7D"
                     android:textSize="17sp"
                     android:textStyle="bold"
-                    android:paddingHorizontal="14dp"
+                    android:paddingLeft="14dp"
+                    android:paddingRight="14dp"
                     android:hint="مثال: 10.229.144.16"
                     android:textColorHint="#4B5466"
                     android:inputType="phone"
@@ -279,7 +280,8 @@
                     android:textColor="#38EF7D"
                     android:textSize="17sp"
                     android:textStyle="bold"
-                    android:paddingHorizontal="14dp"
+                    android:paddingLeft="14dp"
+                    android:paddingRight="14dp"
                     android:text="1997"
                     android:inputType="number"
                     android:layout_marginBottom="24dp" />
@@ -292,31 +294,20 @@
                     android:textColor="#FFFFFF"
                     android:textSize="15sp"
                     android:textStyle="bold"
-                    android:backgroundTint="#2979FF"
-                    android:layout_marginBottom="12dp" />
-
-                <Button
-                    android:id="@+id/btnAutoDiscover"
-                    android:layout_width="match_parent"
-                    android:layout_height="50dp"
-                    android:text="🔍  فحص وكشف الشاشة تلقائياً"
-                    android:textColor="#C0C9D6"
-                    android:textSize="14sp"
-                    android:backgroundTint="#161922" />
+                    android:background="#2979FF" />
 
             </LinearLayout>
         </ScrollView>
 
     </FrameLayout>
 
-    <!-- شريط القوائم السفلي الحديث (Modern Bottom Navigation) -->
+    <!-- شريط القوائم السفلي الحديث -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="62dp"
+        android:layout_height="60dp"
         android:orientation="horizontal"
         android:background="#12141C"
-        android:gravity="center"
-        android:elevation="12dp">
+        android:gravity="center">
 
         <LinearLayout
             android:id="@+id/navHome"
@@ -332,7 +323,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="📡"
-                android:textSize="18sp" />
+                android:textSize="16sp" />
 
             <TextView
                 android:id="@+id/txtNavHome"
@@ -358,7 +349,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="🌐"
-                android:textSize="18sp" />
+                android:textSize="16sp" />
 
             <TextView
                 android:id="@+id/txtNavBrowser"
@@ -383,7 +374,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="⚙️"
-                android:textSize="18sp" />
+                android:textSize="16sp" />
 
             <TextView
                 android:id="@+id/txtNavSettings"
