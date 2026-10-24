@@ -1,64 +1,125 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/drawerLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="#0F1016">
+    android:background="#12141A">
 
-    <!-- الحاوية الرئيسية للشاشات الثلاث -->
-    <FrameLayout
-        android:id="@+id/contentFrame"
+    <!-- الواجهة الأساسية (المتصفح وشريط الأدوات العلوي على طريقة Web Video Caster) -->
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-        <!-- ======================= 1. واجهة البث والريموت ======================= -->
-        <ScrollView
-            android:id="@+id/tabHome"
+        <!-- شريط علوي احترافي (Top Bar) -->
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="visible">
+            android:layout_height="54dp"
+            android:background="#1A1D26"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="8dp">
 
-            <LinearLayout
+            <!-- زر القائمة الجانبية ☰ -->
+            <Button
+                android:id="@+id/btnMenu"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:text="☰"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:background="#242834" />
+
+            <!-- خانة الرابط أو البحث -->
+            <EditText
+                android:id="@+id/etBrowserUrl"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:background="#0F1117"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:paddingHorizontal="12dp"
+                android:hint="أدخل الرابط أو ابحث..."
+                android:textColorHint="#5E687A"
+                android:inputType="textUri"
+                android:imeOptions="actionGo"
+                android:layout_marginHorizontal="6dp" />
+
+            <!-- زر التحديث 🔄 -->
+            <Button
+                android:id="@+id/btnRefresh"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:text="🔄"
+                android:textSize="14sp"
+                android:textColor="#FFFFFF"
+                android:background="#242834"
+                android:layout_marginEnd="6dp" />
+
+            <!-- زر كشف وبث الفيديو للشاشة 📺 -->
+            <Button
+                android:id="@+id/btnCast"
+                android:layout_width="44dp"
+                android:layout_height="40dp"
+                android:text="📺"
+                android:textSize="18sp"
+                android:textColor="#38EF7D"
+                android:background="#242834" />
+        </LinearLayout>
+
+        <!-- شريط التقدم -->
+        <ProgressBar
+            android:id="@+id/browserProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:visibility="gone" />
+
+        <!-- الحاوية الأساسية للشاشات -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <!-- 1. شاشة المتصفح الأساسية -->
+            <WebView
+                android:id="@+id/mainWebView"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp"
-                android:gravity="center_horizontal">
+                android:layout_height="match_parent" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="AboEzzat Share"
-                    android:textColor="#E0E6ED"
-                    android:textSize="24sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="10dp"
-                    android:layout_marginBottom="4dp" />
+            <!-- 2. واجهة ملفات الهاتف والريموت (تظهر عند اختيارها من القائمة) -->
+            <ScrollView
+                android:id="@+id/viewMediaFiles"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#12141A"
+                android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/tvConnectedIpDisplay"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="متصل بالشاشة: 10.229.144.16:1997"
-                    android:textColor="#38EF7D"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="24dp" />
-
-                <!-- بطاقة إرسال الوسائط -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:layout_marginBottom="20dp">
+                    android:padding="20dp"
+                    android:gravity="center_horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="بث ملفات الهاتف إلى الشاشة"
+                        android:textColor="#E0E6ED"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="18dp" />
 
                     <Button
                         android:id="@+id/btnPickVideo"
                         android:layout_width="match_parent"
-                        android:layout_height="56dp"
+                        android:layout_height="52dp"
                         android:text="🎬  إرسال فيديو من الهاتف"
                         android:textColor="#FFFFFF"
-                        android:textSize="16sp"
+                        android:textSize="15sp"
                         android:textStyle="bold"
                         android:background="#1F2430"
                         android:layout_marginBottom="12dp" />
@@ -66,10 +127,10 @@
                     <Button
                         android:id="@+id/btnPickImage"
                         android:layout_width="match_parent"
-                        android:layout_height="56dp"
+                        android:layout_height="52dp"
                         android:text="🖼️  إرسال صورة من الهاتف"
                         android:textColor="#FFFFFF"
-                        android:textSize="16sp"
+                        android:textSize="15sp"
                         android:textStyle="bold"
                         android:background="#1F2430"
                         android:layout_marginBottom="12dp" />
@@ -77,314 +138,288 @@
                     <Button
                         android:id="@+id/btnPickAudio"
                         android:layout_width="match_parent"
-                        android:layout_height="56dp"
+                        android:layout_height="52dp"
                         android:text="🎵  إرسال مقطع صوتي"
                         android:textColor="#FFFFFF"
-                        android:textSize="16sp"
+                        android:textSize="15sp"
                         android:textStyle="bold"
-                        android:background="#1F2430" />
-                </LinearLayout>
+                        android:background="#1F2430"
+                        android:layout_marginBottom="24dp" />
 
-                <!-- ريموت كنترول الشاشة -->
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="التحكم السريع في العرض"
-                    android:textColor="#8F9CAE"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="التحكم في الشاشة والصوت"
+                        android:textColor="#8F9CAE"
+                        android:textSize="14sp"
+                        android:layout_marginBottom="12dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center"
+                        android:layout_marginBottom="12dp">
+
+                        <Button
+                            android:id="@+id/btnVolDown"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:text="🔉 خفض"
+                            android:textColor="#FFFFFF"
+                            android:background="#181C26"
+                            android:layout_marginEnd="6dp" />
+
+                        <Button
+                            android:id="@+id/btnMute"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:text="🔇 كتم"
+                            android:textColor="#FF9800"
+                            android:background="#181C26"
+                            android:layout_marginEnd="6dp" />
+
+                        <Button
+                            android:id="@+id/btnVolUp"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:text="🔊 رفع"
+                            android:textColor="#FFFFFF"
+                            android:background="#181C26" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center"
+                        android:layout_marginBottom="14dp">
+
+                        <Button
+                            android:id="@+id/btnRewind"
+                            android:layout_width="0dp"
+                            android:layout_height="50dp"
+                            android:layout_weight="1"
+                            android:text="⏪ 10ث"
+                            android:textColor="#FFFFFF"
+                            android:background="#181C26"
+                            android:layout_marginEnd="8dp" />
+
+                        <Button
+                            android:id="@+id/btnPlayPause"
+                            android:layout_width="0dp"
+                            android:layout_height="50dp"
+                            android:layout_weight="1.2"
+                            android:text="⏯ تشغيل/إيقاف"
+                            android:textColor="#111111"
+                            android:textStyle="bold"
+                            android:background="#38EF7D"
+                            android:layout_marginEnd="8dp" />
+
+                        <Button
+                            android:id="@+id/btnForward"
+                            android:layout_width="0dp"
+                            android:layout_height="50dp"
+                            android:layout_weight="1"
+                            android:text="10ث ⏩"
+                            android:textColor="#FFFFFF"
+                            android:background="#181C26" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/btnStop"
+                        android:layout_width="match_parent"
+                        android:layout_height="46dp"
+                        android:text="⏹ إنهاء العرض على الشاشة"
+                        android:textColor="#FF5252"
+                        android:background="#24141E" />
+
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- 3. واجهة الإعدادات و IP الشاشة -->
+            <ScrollView
+                android:id="@+id/viewSettings"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#12141A"
+                android:visibility="gone">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center"
-                    android:layout_marginBottom="12dp">
+                    android:orientation="vertical"
+                    android:padding="24dp">
 
-                    <Button
-                        android:id="@+id/btnRewind"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_weight="1"
-                        android:text="⏪ 10ث"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="إعدادات الاتصال بالشاشة"
                         android:textColor="#FFFFFF"
-                        android:background="#181C26"
-                        android:layout_marginRight="8dp" />
-
-                    <Button
-                        android:id="@+id/btnPlayPause"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_weight="1.2"
-                        android:text="⏯ تشغيل/إيقاف"
-                        android:textColor="#111111"
+                        android:textSize="20sp"
                         android:textStyle="bold"
-                        android:background="#38EF7D"
-                        android:layout_marginRight="8dp" />
+                        android:layout_marginBottom="6dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="اكتب الآي بي المعروض على شاشة الفاير ستيك بالمللي"
+                        android:textColor="#7A8799"
+                        android:textSize="13sp"
+                        android:layout_marginBottom="24dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="عنوان IP الشاشة:"
+                        android:textColor="#C0C9D6"
+                        android:textSize="14sp"
+                        android:layout_marginBottom="6dp" />
+
+                    <EditText
+                        android:id="@+id/etTvIpSettings"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:background="#1A1D26"
+                        android:textColor="#38EF7D"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:paddingHorizontal="14dp"
+                        android:hint="مثال: 10.229.144.16"
+                        android:textColorHint="#4B5466"
+                        android:inputType="phone"
+                        android:layout_marginBottom="16dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="منفذ الاتصال (Port):"
+                        android:textColor="#C0C9D6"
+                        android:textSize="14sp"
+                        android:layout_marginBottom="6dp" />
+
+                    <EditText
+                        android:id="@+id/etTvPortSettings"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
+                        android:background="#1A1D26"
+                        android:textColor="#38EF7D"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:paddingHorizontal="14dp"
+                        android:text="1997"
+                        android:inputType="number"
+                        android:layout_marginBottom="24dp" />
 
                     <Button
-                        android:id="@+id/btnForward"
-                        android:layout_width="0dp"
-                        android:layout_height="52dp"
-                        android:layout_weight="1"
-                        android:text="10ث ⏩"
+                        android:id="@+id/btnSaveSettings"
+                        android:layout_width="match_parent"
+                        android:layout_height="54dp"
+                        android:text="💾  حفظ وتثبيت الاتصال"
                         android:textColor="#FFFFFF"
-                        android:background="#181C26" />
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:background="#2979FF" />
+
                 </LinearLayout>
+            </ScrollView>
 
-                <Button
-                    android:id="@+id/btnStop"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:text="⏹ إنهاء العرض والعودة للواجهة"
-                    android:textColor="#FF5252"
-                    android:background="#24141E" />
+        </FrameLayout>
+    </LinearLayout>
 
-            </LinearLayout>
-        </ScrollView>
-
-        <!-- ======================= 2. واجهة المتصفح ======================= -->
-        <LinearLayout
-            android:id="@+id/tabBrowser"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <!-- شريط علوي للتحكم في المتصفح والرجوع للرئيسية -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="54dp"
-                android:orientation="horizontal"
-                android:background="#161922"
-                android:gravity="center_vertical"
-                android:paddingLeft="10dp"
-                android:paddingRight="10dp">
-
-                <Button
-                    android:id="@+id/btnBrowserHome"
-                    android:layout_width="48dp"
-                    android:layout_height="40dp"
-                    android:text="🏠"
-                    android:textSize="18sp"
-                    android:textColor="#38EF7D"
-                    android:background="#222836" />
-
-                <EditText
-                    android:id="@+id/etBrowserUrl"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:background="#0F1118"
-                    android:textColor="#FFFFFF"
-                    android:textSize="13sp"
-                    android:paddingLeft="12dp"
-                    android:paddingRight="12dp"
-                    android:hint="أدخل الرابط أو ابحث..."
-                    android:textColorHint="#5E687A"
-                    android:inputType="textUri"
-                    android:imeOptions="actionGo"
-                    android:layout_marginLeft="8dp"
-                    android:layout_marginRight="8dp" />
-
-                <Button
-                    android:id="@+id/btnBrowserGo"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:text="ذهاب"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:background="#2A3142" />
-            </LinearLayout>
-
-            <ProgressBar
-                android:id="@+id/browserProgress"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                android:visibility="gone" />
-
-            <WebView
-                android:id="@+id/mainWebView"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-        </LinearLayout>
-
-        <!-- ======================= 3. واجهة الإعدادات والـ IP ======================= -->
-        <ScrollView
-            android:id="@+id/tabSettings"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="24dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="إعدادات شاشة الاستقبال"
-                    android:textColor="#FFFFFF"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="6dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="حدد عنوان الآي بي المعروض على شاشة الفاير ستيك"
-                    android:textColor="#7A8799"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="24dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="عنوان IP الشاشة:"
-                    android:textColor="#C0C9D6"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="6dp" />
-
-                <EditText
-                    android:id="@+id/etTvIpSettings"
-                    android:layout_width="match_parent"
-                    android:layout_height="52dp"
-                    android:background="#161922"
-                    android:textColor="#38EF7D"
-                    android:textSize="17sp"
-                    android:textStyle="bold"
-                    android:paddingLeft="14dp"
-                    android:paddingRight="14dp"
-                    android:hint="مثال: 10.229.144.16"
-                    android:textColorHint="#4B5466"
-                    android:inputType="phone"
-                    android:imeOptions="actionDone"
-                    android:layout_marginBottom="16dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="منفذ الاتصال (Port):"
-                    android:textColor="#C0C9D6"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="6dp" />
-
-                <EditText
-                    android:id="@+id/etTvPortSettings"
-                    android:layout_width="match_parent"
-                    android:layout_height="52dp"
-                    android:background="#161922"
-                    android:textColor="#38EF7D"
-                    android:textSize="17sp"
-                    android:textStyle="bold"
-                    android:paddingLeft="14dp"
-                    android:paddingRight="14dp"
-                    android:text="1997"
-                    android:inputType="number"
-                    android:layout_marginBottom="24dp" />
-
-                <Button
-                    android:id="@+id/btnSaveSettings"
-                    android:layout_width="match_parent"
-                    android:layout_height="54dp"
-                    android:text="💾  حفظ وتطبيق الإعدادات"
-                    android:textColor="#FFFFFF"
-                    android:textSize="15sp"
-                    android:textStyle="bold"
-                    android:background="#2979FF" />
-
-            </LinearLayout>
-        </ScrollView>
-
-    </FrameLayout>
-
-    <!-- شريط القوائم السفلي الحديث -->
+    <!-- القائمة الجانبية (Drawer Menu) المتطابقة مع ترتيب Web Video Caster) -->
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:orientation="horizontal"
-        android:background="#12141C"
-        android:gravity="center">
+        android:id="@+id/drawerMenu"
+        android:layout_width="280dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:orientation="vertical"
+        android:background="#181B22"
+        android:padding="16dp">
 
-        <LinearLayout
-            android:id="@+id/navHome"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="AboEzzat Share"
+            android:textColor="#FFD700"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="4dp" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="📡"
-                android:textSize="16sp" />
+        <TextView
+            android:id="@+id/tvDrawerStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="الشاشة: 10.229.144.16:1997"
+            android:textColor="#38EF7D"
+            android:textSize="12sp"
+            android:layout_marginBottom="24dp" />
 
-            <TextView
-                android:id="@+id/txtNavHome"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="البث"
-                android:textColor="#38EF7D"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+        <!-- خيارات القائمة -->
+        <Button
+            android:id="@+id/menuBrowser"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="🌐   المتصفح"
+            android:gravity="start|center_vertical"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:background="#20242F"
+            android:layout_marginBottom="8dp"
+            android:paddingHorizontal="14dp" />
 
-        <LinearLayout
-            android:id="@+id/navBrowser"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true">
+        <Button
+            android:id="@+id/menuMediaFiles"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="📁   ملفات الهاتف والريموت"
+            android:gravity="start|center_vertical"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:background="#20242F"
+            android:layout_marginBottom="8dp"
+            android:paddingHorizontal="14dp" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="🌐"
-                android:textSize="16sp" />
+        <Button
+            android:id="@+id/menuYoutube"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="▶️   YouTube"
+            android:gravity="start|center_vertical"
+            android:textColor="#FF5555"
+            android:textSize="15sp"
+            android:background="#20242F"
+            android:layout_marginBottom="8dp"
+            android:paddingHorizontal="14dp" />
 
-            <TextView
-                android:id="@+id/txtNavBrowser"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="المتصفح"
-                android:textColor="#667085"
-                android:textSize="12sp" />
-        </LinearLayout>
+        <Button
+            android:id="@+id/menuTiktok"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="🎵   TikTok"
+            android:gravity="start|center_vertical"
+            android:textColor="#00F2FE"
+            android:textSize="15sp"
+            android:background="#20242F"
+            android:layout_marginBottom="8dp"
+            android:paddingHorizontal="14dp" />
 
-        <LinearLayout
-            android:id="@+id/navSettings"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="⚙️"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/txtNavSettings"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="الإعدادات"
-                android:textColor="#667085"
-                android:textSize="12sp" />
-        </LinearLayout>
+        <Button
+            android:id="@+id/menuSettings"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="⚙️   إعدادات IP الشاشة"
+            android:gravity="start|center_vertical"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:background="#20242F"
+            android:layout_marginBottom="8dp"
+            android:paddingHorizontal="14dp" />
 
     </LinearLayout>
 
-</LinearLayout>
+</androidx.drawerlayout.widget.DrawerLayout>
