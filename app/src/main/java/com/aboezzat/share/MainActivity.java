@@ -29,7 +29,11 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URLEncoder;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import fi.iki.elonen.NanoHTTPD;
@@ -57,8 +61,10 @@ public class MainActivity extends Activity {
     private EditText etTvIpSettings, etTvPortSettings;
 
     private String lastDetectedMediaUrl = "";
+    private String currentDetectedIp = "";
+    private String currentDetectedPort = "1997";
 
-    // حقن موقع مصر الجغرافي لتخطي الحظر
+    // محاكاة موقع مصر الجغرافي لتخطي الحظر
     private static final String EGYPT_LOCATION_JS =
             "navigator.geolocation.getCurrentPosition = function(success, error, options) {" +
             "   var position = {" +
@@ -81,8 +87,8 @@ public class MainActivity extends Activity {
     private static final int LOCAL_SERVER_PORT = 8899;
 
     private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.SECONDS)
             .build();
 
     @Override
@@ -91,6 +97,8 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
 
         prefs = getSharedPreferences("AboEzzatPrefs", MODE_PRIVATE);
+        currentDetectedIp = prefs.getString("tv_ip", "");
+        currentDetectedPort = prefs.getString("tv_port", "1997");
 
         initViews();
         setupDrawer();
@@ -98,6 +106,9 @@ public class MainActivity extends Activity {
         setupMediaAndRemote();
         setupSettings();
         startLocalServer();
+
+        // بدء الفحص والالتقاط التلقائي للآي بي فور تشغيل البرنامج
+        autoDiscoverTv();
     }
 
     private void initViews() {
@@ -108,15 +119,57 @@ public class MainActivity extends Activity {
         etTvIpSettings = findViewById(R.id.etTvIpSettings);
         etTvPortSettings = findViewById(R.id.etTvPortSettings);
 
-        updateIpDisplay();
+        updateStatusText("جاري البحث التلقائي عن الشاشة...");
     }
 
-    private void updateIpDisplay() {
-        String savedIp = prefs.getString("tv_ip", "10.229.144.16");
-        String savedPort = prefs.getString("tv_port", "1997");
-        tvDrawerStatus.setText("الشاشة: " + savedIp + ":" + savedPort);
-        etTvIpSettings.setText(savedIp);
-        etTvPortSettings.setText(savedPort);
+    private void updateStatusText(String text) {
+        runOnUiThread(() -> {
+            tvDrawerStatus.setText(text);
+            if (!currentDetectedIp.isEmpty()) {
+                etTvIpSettings.setText(currentDetectedIp);
+                etTvPortSettings.setText(currentDetectedPort);
+            }
+        });
+    }
+
+    // الالتقاط التلقائي للشاشة عبر فحص الشبكة
+    private void autoDiscoverTv() {
+        new Thread(() -> {
+            try {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+                String myIp = Formatter.formatIpAddress(wm.getConnectionInfo().getIpAddress());
+                if (myIp == null || myIp.equals("0.0.0.0")) return;
+
+                String subnet = myIp.substring(0, myIp.lastIndexOf(".") + 1);
+                int[] portsToTest = {1997, 8080}; // فحص المنفذين تلقائياً لضمان الالتقاط
+
+                ExecutorService executor = Executors.newFixedThreadPool(25);
+
+                for (int i = 1; i < 255; i++) {
+                    final String host = subnet + i;
+                    for (int port : portsToTest) {
+                        executor.execute(() -> {
+                            try {
+                                Socket socket = new Socket();
+                                socket.connect(new InetSocketAddress(host, port), 250);
+                                socket.close();
+
+                                // تم التقاط الشاشة بنجاح
+                                currentDetectedIp = host;
+                                currentDetectedPort = String.valueOf(port);
+                                prefs.edit().putString("tv_ip", host).putString("tv_port", currentDetectedPort).apply();
+
+                                runOnUiThread(() -> {
+                                    updateStatusText("الشاشة: " + currentDetectedIp + ":" + currentDetectedPort + " ✓");
+                                    Toast.makeText(MainActivity.this, "تم التقاط الشاشة تلقائياً: " + currentDetectedIp, Toast.LENGTH_SHORT).show();
+                                });
+                            } catch (Exception ignored) {}
+                        });
+                    }
+                }
+                executor.shutdown();
+            } catch (Exception ignored) {}
+        }).start();
     }
 
     private void setupDrawer() {
@@ -129,14 +182,13 @@ public class MainActivity extends Activity {
             }
         });
 
-        // خيارات القائمة الجانبية
         findViewById(R.id.menuBrowser).setOnClickListener(v -> {
-            showView(0); // المتصفح
+            showView(0);
             drawerLayout.closeDrawer(GravityCompat.START);
         });
 
         findViewById(R.id.menuMediaFiles).setOnClickListener(v -> {
-            showView(1); // الملفات والريموت
+            showView(1);
             drawerLayout.closeDrawer(GravityCompat.START);
         });
 
@@ -153,7 +205,7 @@ public class MainActivity extends Activity {
         });
 
         findViewById(R.id.menuSettings).setOnClickListener(v -> {
-            showView(2); // الإعدادات
+            showView(2);
             drawerLayout.closeDrawer(GravityCompat.START);
         });
     }
@@ -224,7 +276,6 @@ public class MainActivity extends Activity {
 
         btnRefresh.setOnClickListener(v -> mainWebView.reload());
 
-        // زر البث العلوي 📺
         btnCast.setOnClickListener(v -> {
             if (!lastDetectedMediaUrl.isEmpty()) {
                 sendStreamUrlToTv(lastDetectedMediaUrl);
@@ -308,14 +359,14 @@ public class MainActivity extends Activity {
             String ip = etTvIpSettings.getText().toString().trim();
             String port = etTvPortSettings.getText().toString().trim();
 
-            if (ip.isEmpty()) ip = "10.229.144.16";
-            if (port.isEmpty()) port = "1997";
+            if (!ip.isEmpty()) currentDetectedIp = ip;
+            if (!port.isEmpty()) currentDetectedPort = port;
 
-            prefs.edit().putString("tv_ip", ip).putString("tv_port", port).apply();
-            updateIpDisplay();
+            prefs.edit().putString("tv_ip", currentDetectedIp).putString("tv_port", currentDetectedPort).apply();
+            updateStatusText("الشاشة: " + currentDetectedIp + ":" + currentDetectedPort + " ✓");
 
-            Toast.makeText(MainActivity.this, "تم حفظ الإعدادات وتثبيت الاتصال ✓", Toast.LENGTH_SHORT).show();
-            showView(0); // العودة للمتصفح
+            Toast.makeText(MainActivity.this, "تم الحفظ ✓", Toast.LENGTH_SHORT).show();
+            showView(0);
         });
     }
 
@@ -328,8 +379,8 @@ public class MainActivity extends Activity {
     }
 
     private void sendControlToTv(String action) {
-        String tvIp = prefs.getString("tv_ip", "10.229.144.16");
-        String port = prefs.getString("tv_port", "1997");
+        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp[span_5](start_span)[span_5](end_span);
+        String port = currentDetectedPort;
         String url = "http://" + tvIp + ":" + port + "/control?action=" + action;
 
         Request req = new Request.Builder().url(url).build();
@@ -343,8 +394,8 @@ public class MainActivity extends Activity {
     }
 
     public void sendStreamUrlToTv(String videoUrl) {
-        String tvIp = prefs.getString("tv_ip", "10.229.144.16");
-        String port = prefs.getString("tv_port", "1997");
+        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp[span_6](start_span)[span_6](end_span);
+        String port = currentDetectedPort;
 
         try {
             String url = "http://" + tvIp + ":" + port + "/play?url=" + URLEncoder.encode(videoUrl, "UTF-8");
@@ -352,7 +403,8 @@ public class MainActivity extends Activity {
             httpClient.newCall(req).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, java.io.IOException e) {
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تعذر الاتصال بالشاشة! تأكد من الـ IP المكتوب على التلفزيون", Toast.LENGTH_LONG).show());
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تعذر الاتصال بالشاشة! جاري فحص الشبكة...", Toast.LENGTH_SHORT).show());
+                    autoDiscoverTv(); // إعادة فحص تلقائي فوراً لو حصل تعذر
                 }
 
                 @Override
@@ -418,7 +470,7 @@ public class MainActivity extends Activity {
         if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
             drawerLayout.closeDrawer(GravityCompat.START);
         } else if (viewMediaFiles.getVisibility() == View.VISIBLE || viewSettings.getVisibility() == View.VISIBLE) {
-            showView(0); // الرجوع للمتصفح
+            showView(0);
         } else if (mainWebView.canGoBack()) {
             mainWebView.goBack();
         } else {
