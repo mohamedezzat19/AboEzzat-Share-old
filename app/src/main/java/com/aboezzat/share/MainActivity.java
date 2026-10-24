@@ -4,12 +4,9 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.database.Cursor;
-import android.graphics.Bitmap;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
-import android.provider.OpenableColumns;
 import android.text.format.Formatter;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
@@ -26,14 +23,9 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AppCompatActivity;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.net.InetAddress;
 import java.net.URLEncoder;
 import java.util.concurrent.TimeUnit;
 
@@ -44,7 +36,11 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
+
+    private static final int REQ_PICK_VIDEO = 101;
+    private static final int REQ_PICK_IMAGE = 102;
+    private static final int REQ_PICK_AUDIO = 103;
 
     private SharedPreferences prefs;
     private View tabHome, tabBrowser, tabSettings;
@@ -65,24 +61,6 @@ public class MainActivity extends AppCompatActivity {
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(4, TimeUnit.SECONDS)
             .build();
-
-    // اختيار الفيديو
-    private final ActivityResultLauncher<String> pickVideoLauncher =
-            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
-                if (uri != null) sendLocalFileToTv(uri, "video");
-            });
-
-    // اختيار الصورة
-    private final ActivityResultLauncher<String> pickImageLauncher =
-            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
-                if (uri != null) sendLocalFileToTv(uri, "image");
-            });
-
-    // اختيار الصوت
-    private final ActivityResultLauncher<String> pickAudioLauncher =
-            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
-                if (uri != null) sendLocalFileToTv(uri, "audio");
-            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -123,7 +101,7 @@ public class MainActivity extends AppCompatActivity {
         etTvPortSettings.setText(savedPort);
     }
 
-    // التنقل بين الأقسام الثلاثة بسلاسة
+    // التنقل بين الأقسام الثلاثة
     private void setupNavigation() {
         findViewById(R.id.navHome).setOnClickListener(v -> switchTab(0));
         findViewById(R.id.navBrowser).setOnClickListener(v -> switchTab(1));
@@ -143,9 +121,23 @@ public class MainActivity extends AppCompatActivity {
 
     // إعدادات أزرار البث والريموت
     private void setupHomeActions() {
-        findViewById(R.id.btnPickVideo).setOnClickListener(v -> pickVideoLauncher.launch("video/*"));
-        findViewById(R.id.btnPickImage).setOnClickListener(v -> pickImageLauncher.launch("image/*"));
-        findViewById(R.id.btnPickAudio).setOnClickListener(v -> pickAudioLauncher.launch("audio/*"));
+        findViewById(R.id.btnPickVideo).setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.setType("video/*");
+            startActivityForResult(intent, REQ_PICK_VIDEO);
+        });
+
+        findViewById(R.id.btnPickImage).setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.setType("image/*");
+            startActivityForResult(intent, REQ_PICK_IMAGE);
+        });
+
+        findViewById(R.id.btnPickAudio).setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.setType("audio/*");
+            startActivityForResult(intent, REQ_PICK_AUDIO);
+        });
 
         findViewById(R.id.btnPlayPause).setOnClickListener(v -> sendControlToTv("play_pause"));
         findViewById(R.id.btnForward).setOnClickListener(v -> sendControlToTv("forward"));
@@ -153,7 +145,22 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnStop).setOnClickListener(v -> sendControlToTv("stop"));
     }
 
-    // إعدادات المتصفح وزر الرجوع المباشر للرئيسية
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri uri = data.getData();
+            if (requestCode == REQ_PICK_VIDEO) {
+                sendLocalFileToTv(uri, "video");
+            } else if (requestCode == REQ_PICK_IMAGE) {
+                sendLocalFileToTv(uri, "image");
+            } else if (requestCode == REQ_PICK_AUDIO) {
+                sendLocalFileToTv(uri, "audio");
+            }
+        }
+    }
+
+    // إعدادات المتصفح وزر العودة للرئيسية
     private void setupBrowser() {
         mainWebView = findViewById(R.id.mainWebView);
         etBrowserUrl = findViewById(R.id.etBrowserUrl);
@@ -182,7 +189,6 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // كشف روابط الميديا ومشاركتها للشاشة فوراً
                 if (url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?")) {
                     sendStreamUrlToTv(url);
                     Toast.makeText(MainActivity.this, "تم كشف رابط الفيديو وإرساله للشاشة!", Toast.LENGTH_SHORT).show();
@@ -197,10 +203,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // زر العودة السريعة للرئيسية دون قفل التطبيق
         btnBrowserHome.setOnClickListener(v -> switchTab(0));
-
         btnBrowserGo.setOnClickListener(v -> loadUrlFromInput());
+
         etBrowserUrl.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_GO) {
                 loadUrlFromInput();
@@ -224,7 +229,6 @@ public class MainActivity extends AppCompatActivity {
     // إعدادات الـ IP وقفل الكيبورد التلقائي
     private void setupSettings() {
         Button btnSave = findViewById(R.id.btnSaveSettings);
-        Button btnAuto = findViewById(R.id.btnAutoDiscover);
 
         btnSave.setOnClickListener(v -> {
             hideKeyboard();
@@ -241,10 +245,8 @@ public class MainActivity extends AppCompatActivity {
             updateIpDisplay();
 
             Toast.makeText(MainActivity.this, "تم حفظ الإعدادات بنجاح ✓", Toast.LENGTH_SHORT).show();
-            switchTab(0); // الرجوع للرئيسية بعد الحفظ
+            switchTab(0);
         });
-
-        btnAuto.setOnClickListener(v -> autoDiscoverTv());
     }
 
     private void hideKeyboard() {
@@ -255,7 +257,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // إرسال أوامر الريموت
     private void sendControlToTv(String action) {
         String tvIp = prefs.getString("tv_ip", "10.229.144.16");
         String port = prefs.getString("tv_port", "1997");
@@ -271,7 +272,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // إرسال رابط فيديو خارجي
     public void sendStreamUrlToTv(String videoUrl) {
         String tvIp = prefs.getString("tv_ip", "10.229.144.16");
         String port = prefs.getString("tv_port", "1997");
@@ -290,10 +290,9 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this, "تم الإرسال والتشغيل ✓", Toast.LENGTH_SHORT).show());
                 }
             });
-        } catch (Exception e) {}
+        } catch (Exception ignored) {}
     }
 
-    // إرسال ملفات الهاتف المحلية
     private void sendLocalFileToTv(Uri fileUri, String type) {
         try {
             File tempFile = new File(getCacheDir(), "shared_media");
@@ -344,30 +343,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void autoDiscoverTv() {
-        Toast.makeText(this, "جاري فحص الشبكة...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            try {
-                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-                String myIp = Formatter.formatIpAddress(wm.getConnectionInfo().getIpAddress());
-                String prefix = myIp.substring(0, myIp.lastIndexOf(".") + 1);
-
-                for (int i = 1; i < 255; i++) {
-                    String testIp = prefix + i;
-                    try {
-                        InetAddress addr = InetAddress.getByName(testIp);
-                        if (addr.isReachable(40)) {
-                            // تم العثور على جهاز نشط
-                        }
-                    } catch (Exception ignored) {}
-                }
-            } catch (Exception ignored) {}
-        }).start();
-    }
-
     @Override
     public void onBackPressed() {
-        // إدارة الرجوع الذكي: لو في المتصفح يرجع صفحة ورا، لو في صفحة البداية يرجع لقسم البث
         if (tabBrowser.getVisibility() == View.VISIBLE) {
             if (mainWebView.canGoBack()) {
                 mainWebView.goBack();
