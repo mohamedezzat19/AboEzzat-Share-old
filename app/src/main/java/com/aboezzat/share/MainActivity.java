@@ -107,7 +107,6 @@ public class MainActivity extends Activity {
         setupSettings();
         startLocalServer();
 
-        // بدء الفحص والالتقاط التلقائي للآي بي فور تشغيل البرنامج
         autoDiscoverTv();
     }
 
@@ -132,7 +131,6 @@ public class MainActivity extends Activity {
         });
     }
 
-    // الالتقاط التلقائي للشاشة عبر فحص الشبكة
     private void autoDiscoverTv() {
         new Thread(() -> {
             try {
@@ -141,7 +139,7 @@ public class MainActivity extends Activity {
                 if (myIp == null || myIp.equals("0.0.0.0")) return;
 
                 String subnet = myIp.substring(0, myIp.lastIndexOf(".") + 1);
-                int[] portsToTest = {1997, 8080}; // فحص المنفذين تلقائياً لضمان الالتقاط
+                int[] portsToTest = {1997, 8080};
 
                 ExecutorService executor = Executors.newFixedThreadPool(25);
 
@@ -154,7 +152,6 @@ public class MainActivity extends Activity {
                                 socket.connect(new InetSocketAddress(host, port), 250);
                                 socket.close();
 
-                                // تم التقاط الشاشة بنجاح
                                 currentDetectedIp = host;
                                 currentDetectedPort = String.valueOf(port);
                                 prefs.edit().putString("tv_ip", host).putString("tv_port", currentDetectedPort).apply();
@@ -379,7 +376,7 @@ public class MainActivity extends Activity {
     }
 
     private void sendControlToTv(String action) {
-        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp[span_5](start_span)[span_5](end_span);
+        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp;
         String port = currentDetectedPort;
         String url = "http://" + tvIp + ":" + port + "/control?action=" + action;
 
@@ -394,7 +391,7 @@ public class MainActivity extends Activity {
     }
 
     public void sendStreamUrlToTv(String videoUrl) {
-        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp[span_6](start_span)[span_6](end_span);
+        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp;
         String port = currentDetectedPort;
 
         try {
@@ -404,7 +401,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void onFailure(Call call, java.io.IOException e) {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this, "تعذر الاتصال بالشاشة! جاري فحص الشبكة...", Toast.LENGTH_SHORT).show());
-                    autoDiscoverTv(); // إعادة فحص تلقائي فوراً لو حصل تعذر
+                    autoDiscoverTv();
                 }
 
                 @Override
