@@ -1,355 +1,93 @@
 package com.aboezzat.share;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Color;
-import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.view.ViewGroup;
-import android.webkit.JavascriptInterface;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.widget.FrameLayout;
-import android.widget.ProgressBar;
 import android.widget.Toast;
-
-import java.io.IOException;
-import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
-import org.json.JSONObject;
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.util.concurrent.TimeUnit;
 
 public class ShareActivity extends Activity {
-
-    private final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(12, TimeUnit.SECONDS)
-            .readTimeout(12, TimeUnit.SECONDS)
-            .build();
-
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private WebView webView;
-    private boolean isCaptured = false;
-    private String targetTvIp = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        FrameLayout rootLayout = new FrameLayout(this);
-        rootLayout.setBackgroundColor(Color.TRANSPARENT);
-        ProgressBar progressBar = new ProgressBar(this);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        params.gravity = android.view.Gravity.CENTER;
-        rootLayout.addView(progressBar, params);
-        setContentView(rootLayout);
 
         Intent intent = getIntent();
         String action = intent.getAction();
         String type = intent.getType();
 
         if (Intent.ACTION_SEND.equals(action) && type != null) {
-            String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
-            if (sharedText != null) {
-                String extractedUrl = extractUrl(sharedText);
-                if (extractedUrl != null) {
-                    dispatchPlatformRoute(extractedUrl);
+            if ("text/plain".equals(type)) {
+                String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+                if (sharedText != null) {
+                    sendToTv(extractUrl(sharedText));
                     return;
                 }
             }
         }
-
-        if (Intent.ACTION_SEND_MULTIPLE.equals(action) && type != null) {
-            ArrayList<Uri> mediaUris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
-            if (mediaUris != null && !mediaUris.isEmpty()) {
-                sendMultipleMedia(mediaUris);
-                return;
-            }
-        }
-
         finish();
     }
 
     private String extractUrl(String text) {
-        Pattern pattern = Pattern.compile("(https?://[\\w\\-\\.\\?\\=\\&\\%\\/\\#\\+]+)");
-        Matcher matcher = pattern.matcher(text);
-        if (matcher.find()) return matcher.group(1);
-        return null;
+        String[] parts = text.split("\\s+");
+        for (String item : parts) {
+            if (item.startsWith("http://") || item.startsWith("https://")) {
+                return item;
+            }
+        }
+        return text;
     }
 
-    // فرز المنصات: كل منصة تعمل بمسار مستقل تماماً دون تدخل
-    private void dispatchPlatformRoute(String url) {
-        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
-        targetTvIp = prefs.getString("tv_ip", "").trim();
+    private void sendToTv(String videoUrl) {
+        SharedPreferences prefs = getSharedPreferences("AboEzzatPrefs", MODE_PRIVATE);
+        // قراءة الـ IP المحفوظ في التطبيق أو استخدام الافتراضي للشاشة
+        String tvIp = prefs.getString("tv_ip", "10.229.144.16");
 
-        String lowerUrl = url.toLowerCase();
-
-        // 1. إنستجرام: يفتح المتصفح فوراً دون قناص
-        if (lowerUrl.contains("instagram.com")) {
-            Intent browserIntent = new Intent(this, BrowserActivity.class);
-            browserIntent.setAction(Intent.ACTION_VIEW);
-            browserIntent.setData(Uri.parse(url));
-            startActivity(browserIntent);
-            finish();
-            return;
-        }
-
-        // إذا كان IP الفاير ستيك غير محدد وكانت شاشة الويب متصلة، يستمر البث
-        if (targetTvIp.isEmpty() && !MainActivity.hasWebClients()) {
-            Toast.makeText(this, "يرجى تعيين عنوان IP الشاشة أولاً", Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
-
-        // 2. يوتيوب: إرسال فوري مباشر
-        if (lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be")) {
-            sendToTv(targetTvIp, url, false);
-            return;
-        }
-
-        // 3. تيك توك: العادي عبر API السريع
-        if (lowerUrl.contains("tiktok.com") && !lowerUrl.contains("/live") && !lowerUrl.contains("live.tiktok.com")) {
-            Toast.makeText(this, "جاري استخراج فيديو تيك توك...", Toast.LENGTH_SHORT).show();
-            handleTikTok(url);
-            return;
-        }
-
-        // 4. ثريدز (Threads): قناص صامت خفيف للشاشة خبط لزق
-        if (lowerUrl.contains("threads.net")) {
-            Toast.makeText(this, "جاري قنص ثريد للشاشة مباشرة...", Toast.LENGTH_SHORT).show();
-            startPlatformSniffer(url, "threads");
-            return;
-        }
-
-        // 5. تويتر (X) وفيسبوك ولايف تيك توك
-        Toast.makeText(this, "جاري قنص الفيديو للشاشة...", Toast.LENGTH_SHORT).show();
-        startPlatformSniffer(url, "generic");
-    }
-
-    private void handleTikTok(final String url) {
         try {
-            String apiUrl = "https://www.tikwm.com/api/?url=" + URLEncoder.encode(url, "UTF-8");
-            Request request = new Request.Builder().url(apiUrl).build();
+            String targetUrl = "http://" + tvIp + ":1997/play?url=" + URLEncoder.encode(videoUrl, "UTF-8");
+
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(5, TimeUnit.SECONDS)
+                    .build();
+
+            Request request = new Request.Builder()
+                    .url(targetUrl)
+                    .build();
 
             client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    mainHandler.post(() -> startPlatformSniffer(url, "generic"));
+                    runOnUiThread(() -> {
+                        Toast.makeText(ShareActivity.this, "تعذر الاتصال بالشاشة! تأكد من تشغيل المشغل", Toast.LENGTH_LONG).show();
+                        finish();
+                    });
                 }
 
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
-                    try {
-                        String body = response.body().string();
-                        JSONObject json = new JSONObject(body);
-                        if (json.optInt("code") == 0 && json.has("data")) {
-                            JSONObject data = json.getJSONObject("data");
-                            String play = data.optString("play");
-                            if (!play.isEmpty()) {
-                                if (!play.startsWith("http")) play = "https://www.tikwm.com" + play;
-                                sendToTv(targetTvIp, play, false);
-                                return;
-                            }
+                    runOnUiThread(() -> {
+                        if (response.isSuccessful()) {
+                            Toast.makeText(ShareActivity.this, "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(ShareActivity.this, "الشاشة استقبلت لكن تعذر التشغيل", Toast.LENGTH_SHORT).show();
                         }
-                    } catch (Exception ignored) {}
-                    mainHandler.post(() -> startPlatformSniffer(url, "generic"));
-                }
-            });
-        } catch (Exception e) {
-            startPlatformSniffer(url, "generic");
-        }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private void startPlatformSniffer(String url, final String platformType) {
-        isCaptured = false;
-        webView = new WebView(this);
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-
-        // User-Agent الأصلي الخفيف المعتمد
-        settings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36");
-
-        webView.addJavascriptInterface(new Object() {
-            @JavascriptInterface
-            public void onMediaFound(String mediaUrl) {
-                checkAndSendMedia(mediaUrl, platformType);
-            }
-        }, "MediaSniffer");
-
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                String reqUrl = request.getUrl().toString();
-                checkAndSendMedia(reqUrl, platformType);
-                return super.shouldInterceptRequest(view, request);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String loadedUrl) {
-                super.onPageFinished(view, loadedUrl);
-                String js = "(function() { " +
-                        "   try { " +
-                        "       var vids = document.getElementsByTagName('video'); " +
-                        "       for (var i = 0; i < vids.length; i++) { " +
-                        "           vids[i].muted = true; " +
-                        "           vids[i].play(); " +
-                        "           var src = vids[i].currentSrc || vids[i].src; " +
-                        "           if (src && src.startsWith('http')) { " +
-                        "               window.MediaSniffer.onMediaFound(src); " +
-                        "           } " +
-                        "       } " +
-                        "   } catch(e){} " +
-                        "})();";
-                view.evaluateJavascript(js, null);
-            }
-        });
-
-        webView.loadUrl(url);
-
-        mainHandler.postDelayed(() -> {
-            if (!isCaptured) {
-                Toast.makeText(ShareActivity.this, "تعذر القنص المباشر، جرب فتحه بالمتصفح", Toast.LENGTH_SHORT).show();
-                destroyWebView();
-                finish();
-            }
-        }, 16000);
-    }
-
-    private synchronized void checkAndSendMedia(String reqUrl, String platformType) {
-        if (isCaptured || reqUrl == null || reqUrl.isEmpty()) return;
-
-        String lower = reqUrl.toLowerCase();
-
-        if (lower.contains(".jpg") || lower.contains(".png") || lower.contains(".webp") ||
-                lower.contains(".js") || lower.contains(".css") || lower.contains("rsrc.php") ||
-                lower.contains("preview") || lower.contains(".ico")) {
-            return;
-        }
-
-        boolean matched = false;
-
-        // مسار خاص لثريدز: قنص رابط MP4 الصافي
-        if ("threads".equals(platformType)) {
-            if (lower.contains(".mp4") || lower.contains("video_playback") || (lower.contains("cdninstagram.com") && lower.contains("/v/"))) {
-                matched = true;
-            }
-        } else {
-            // المسار العام للفيسبوك وتويتر وبثوث لايف تيك توك
-            if ((lower.contains("pull-") && lower.contains("tiktokcdn.com")) ||
-                (lower.contains("tiktokcdn.com") && (lower.contains(".flv") || lower.contains(".m3u8"))) ||
-                lower.contains(".mp4") || lower.contains(".m3u8") ||
-                lower.contains("video_playback") || lower.contains("&mime=video")) {
-                matched = true;
-            }
-        }
-
-        if (matched) {
-            isCaptured = true;
-            mainHandler.post(() -> {
-                sendToTv(targetTvIp, reqUrl, false);
-                destroyWebView();
-            });
-        }
-    }
-
-    private void destroyWebView() {
-        if (webView != null) {
-            webView.stopLoading();
-            webView.destroy();
-            webView = null;
-        }
-    }
-
-    private void sendToTv(String tvIp, String mediaUrl, boolean isQueue) {
-        // 1. الإرسال الفوري لشاشات LG وسامسونج عبر WebSocket بالتوازي
-        MainActivity.broadcastToWebTv("PLAY_VIDEO", mediaUrl, null, null);
-
-        // 2. الإرسال لجهاز الفاير ستيك بالطريقة القديمة الأصلية بدون أي تغيير
-        if (tvIp == null || tvIp.trim().isEmpty()) {
-            mainHandler.post(() -> {
-                Toast.makeText(ShareActivity.this, "تم الإرسال لشاشة الويب بنجاح ✓", Toast.LENGTH_SHORT).show();
-                finish();
-            });
-            return;
-        }
-
-        try {
-            if (!tvIp.startsWith("http://") && !tvIp.startsWith("https://")) {
-                tvIp = "http://" + tvIp;
-            }
-            if (!tvIp.contains(":8080")) {
-                tvIp = tvIp + ":8080";
-            }
-
-            String paramName = isQueue ? "queue" : "url";
-            String fullUrl = tvIp + "/?" + paramName + "=" + URLEncoder.encode(mediaUrl, "UTF-8");
-            Request request = new Request.Builder().url(fullUrl).build();
-
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    mainHandler.post(() -> {
-                        Toast.makeText(ShareActivity.this, "تم الإرسال (تحقق من الفاير ستيك)", Toast.LENGTH_SHORT).show();
-                        finish();
-                    });
-                }
-
-                @Override
-                public void onResponse(Call call, Response response) {
-                    mainHandler.post(() -> {
-                        Toast.makeText(ShareActivity.this, isQueue ? "تمت الإضافة لقائمة التشغيل ✓" : "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show();
                         finish();
                     });
                 }
             });
+
         } catch (Exception e) {
-            mainHandler.post(this::finish);
-        }
-    }
-
-    private void sendMultipleMedia(ArrayList<Uri> uris) {
-        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
-        targetTvIp = prefs.getString("tv_ip", "").trim();
-
-        if (targetTvIp.isEmpty() && !MainActivity.hasWebClients()) {
-            Toast.makeText(this, "يرجى تعيين عنوان IP الشاشة أولاً", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "خطأ في الرابط!", Toast.LENGTH_SHORT).show();
             finish();
-            return;
         }
-
-        Toast.makeText(this, "جاري إرسال قائمة الفيديوهات للشاشة...", Toast.LENGTH_SHORT).show();
-
-        for (int i = 0; i < uris.size(); i++) {
-            final boolean isQueue = (i > 0);
-            final String fileUrl = uris.get(i).toString();
-            mainHandler.postDelayed(() -> sendToTv(targetTvIp, fileUrl, isQueue), i * 350L);
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
-        destroyWebView();
-        super.onDestroy();
     }
 }
