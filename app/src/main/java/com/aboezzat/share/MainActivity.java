@@ -11,6 +11,7 @@ import android.text.format.Formatter;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.webkit.GeolocationPermissions;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -21,6 +22,9 @@ import android.widget.EditText;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.core.view.GravityCompat;
+import androidx.drawerlayout.widget.DrawerLayout;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -41,22 +45,44 @@ public class MainActivity extends Activity {
     private static final int REQ_PICK_IMAGE = 102;
     private static final int REQ_PICK_AUDIO = 103;
 
+    private DrawerLayout drawerLayout;
     private SharedPreferences prefs;
-    private View tabHome, tabBrowser, tabSettings;
-    private TextView txtNavHome, txtNavBrowser, txtNavSettings, tvConnectedIpDisplay;
-    private EditText etTvIpSettings, etTvPortSettings;
 
     private WebView mainWebView;
     private EditText etBrowserUrl;
     private ProgressBar browserProgress;
+
+    private View viewMediaFiles, viewSettings;
+    private TextView tvDrawerStatus;
+    private EditText etTvIpSettings, etTvPortSettings;
+
+    private String lastDetectedMediaUrl = "";
+
+    // حقن موقع مصر الجغرافي لتخطي الحظر
+    private static final String EGYPT_LOCATION_JS =
+            "navigator.geolocation.getCurrentPosition = function(success, error, options) {" +
+            "   var position = {" +
+            "       coords: {" +
+            "           latitude: 30.044426," +
+            "           longitude: 31.235712," +
+            "           accuracy: 10," +
+            "           altitude: null," +
+            "           altitudeAccuracy: null," +
+            "           heading: null," +
+            "           speed: null" +
+            "       }," +
+            "       timestamp: new Date().getTime()" +
+            "   };" +
+            "   success(position);" +
+            "};";
 
     private LocalMediaServer localServer;
     private File currentServedFile = null;
     private static final int LOCAL_SERVER_PORT = 8899;
 
     private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(4, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
             .build();
 
     @Override
@@ -67,23 +93,18 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("AboEzzatPrefs", MODE_PRIVATE);
 
         initViews();
-        setupNavigation();
-        setupHomeActions();
+        setupDrawer();
         setupBrowser();
+        setupMediaAndRemote();
         setupSettings();
         startLocalServer();
     }
 
     private void initViews() {
-        tabHome = findViewById(R.id.tabHome);
-        tabBrowser = findViewById(R.id.tabBrowser);
-        tabSettings = findViewById(R.id.tabSettings);
-
-        txtNavHome = findViewById(R.id.txtNavHome);
-        txtNavBrowser = findViewById(R.id.txtNavBrowser);
-        txtNavSettings = findViewById(R.id.txtNavSettings);
-
-        tvConnectedIpDisplay = findViewById(R.id.tvConnectedIpDisplay);
+        drawerLayout = findViewById(R.id.drawerLayout);
+        viewMediaFiles = findViewById(R.id.viewMediaFiles);
+        viewSettings = findViewById(R.id.viewSettings);
+        tvDrawerStatus = findViewById(R.id.tvDrawerStatus);
         etTvIpSettings = findViewById(R.id.etTvIpSettings);
         etTvPortSettings = findViewById(R.id.etTvPortSettings);
 
@@ -93,29 +114,151 @@ public class MainActivity extends Activity {
     private void updateIpDisplay() {
         String savedIp = prefs.getString("tv_ip", "10.229.144.16");
         String savedPort = prefs.getString("tv_port", "1997");
-        tvConnectedIpDisplay.setText("متصل بالشاشة: " + savedIp + ":" + savedPort);
+        tvDrawerStatus.setText("الشاشة: " + savedIp + ":" + savedPort);
         etTvIpSettings.setText(savedIp);
         etTvPortSettings.setText(savedPort);
     }
 
-    private void setupNavigation() {
-        findViewById(R.id.navHome).setOnClickListener(v -> switchTab(0));
-        findViewById(R.id.navBrowser).setOnClickListener(v -> switchTab(1));
-        findViewById(R.id.navSettings).setOnClickListener(v -> switchTab(2));
+    private void setupDrawer() {
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            hideKeyboard();
+            if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                drawerLayout.closeDrawer(GravityCompat.START);
+            } else {
+                drawerLayout.openDrawer(GravityCompat.START);
+            }
+        });
+
+        // خيارات القائمة الجانبية
+        findViewById(R.id.menuBrowser).setOnClickListener(v -> {
+            showView(0); // المتصفح
+            drawerLayout.closeDrawer(GravityCompat.START);
+        });
+
+        findViewById(R.id.menuMediaFiles).setOnClickListener(v -> {
+            showView(1); // الملفات والريموت
+            drawerLayout.closeDrawer(GravityCompat.START);
+        });
+
+        findViewById(R.id.menuYoutube).setOnClickListener(v -> {
+            showView(0);
+            mainWebView.loadUrl("https://m.youtube.com");
+            drawerLayout.closeDrawer(GravityCompat.START);
+        });
+
+        findViewById(R.id.menuTiktok).setOnClickListener(v -> {
+            showView(0);
+            mainWebView.loadUrl("https://www.tiktok.com");
+            drawerLayout.closeDrawer(GravityCompat.START);
+        });
+
+        findViewById(R.id.menuSettings).setOnClickListener(v -> {
+            showView(2); // الإعدادات
+            drawerLayout.closeDrawer(GravityCompat.START);
+        });
     }
 
-    private void switchTab(int index) {
+    private void showView(int index) {
         hideKeyboard();
-        tabHome.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
-        tabBrowser.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
-        tabSettings.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
-
-        txtNavHome.setTextColor(index == 0 ? 0xFF38EF7D : 0xFF667085);
-        txtNavBrowser.setTextColor(index == 1 ? 0xFF38EF7D : 0xFF667085);
-        txtNavSettings.setTextColor(index == 2 ? 0xFF38EF7D : 0xFF667085);
+        mainWebView.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
+        viewMediaFiles.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
+        viewSettings.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
     }
 
-    private void setupHomeActions() {
+    private void setupBrowser() {
+        mainWebView = findViewById(R.id.mainWebView);
+        etBrowserUrl = findViewById(R.id.etBrowserUrl);
+        browserProgress = findViewById(R.id.browserProgress);
+        Button btnRefresh = findViewById(R.id.btnRefresh);
+        Button btnCast = findViewById(R.id.btnCast);
+
+        WebSettings ws = mainWebView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setGeolocationEnabled(true);
+        ws.setMediaPlaybackRequiresUserGesture(false);
+        ws.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
+
+        mainWebView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int newProgress) {
+                if (newProgress < 100) {
+                    browserProgress.setVisibility(View.VISIBLE);
+                    browserProgress.setProgress(newProgress);
+                } else {
+                    browserProgress.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                callback.invoke(origin, true, false);
+            }
+        });
+
+        mainWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                view.evaluateJavascript(EGYPT_LOCATION_JS, null);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?")) {
+                    lastDetectedMediaUrl = url;
+                    sendStreamUrlToTv(url);
+                    Toast.makeText(MainActivity.this, "تم كشف رابط الفيديو وإرساله للشاشة!", Toast.LENGTH_SHORT).show();
+                }
+                return false;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                view.evaluateJavascript(EGYPT_LOCATION_JS, null);
+                etBrowserUrl.setText(url);
+            }
+        });
+
+        btnRefresh.setOnClickListener(v -> mainWebView.reload());
+
+        // زر البث العلوي 📺
+        btnCast.setOnClickListener(v -> {
+            if (!lastDetectedMediaUrl.isEmpty()) {
+                sendStreamUrlToTv(lastDetectedMediaUrl);
+            } else {
+                String currentUrl = mainWebView.getUrl();
+                if (currentUrl != null) {
+                    sendStreamUrlToTv(currentUrl);
+                } else {
+                    Toast.makeText(this, "لا يوجد فيديو نشط للبث!", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+        etBrowserUrl.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_GO) {
+                loadUrlFromInput();
+                return true;
+            }
+            return false;
+        });
+
+        mainWebView.loadUrl("https://www.google.com.eg");
+    }
+
+    private void loadUrlFromInput() {
+        hideKeyboard();
+        String url = etBrowserUrl.getText().toString().trim();
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            url = "https://www.google.com.eg/search?q=" + url;
+        }
+        mainWebView.loadUrl(url);
+    }
+
+    private void setupMediaAndRemote() {
         findViewById(R.id.btnPickVideo).setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
             intent.setType("video/*");
@@ -133,6 +276,10 @@ public class MainActivity extends Activity {
             intent.setType("audio/*");
             startActivityForResult(intent, REQ_PICK_AUDIO);
         });
+
+        findViewById(R.id.btnVolUp).setOnClickListener(v -> sendControlToTv("vol_up"));
+        findViewById(R.id.btnVolDown).setOnClickListener(v -> sendControlToTv("vol_down"));
+        findViewById(R.id.btnMute).setOnClickListener(v -> sendControlToTv("mute"));
 
         findViewById(R.id.btnPlayPause).setOnClickListener(v -> sendControlToTv("play_pause"));
         findViewById(R.id.btnForward).setOnClickListener(v -> sendControlToTv("forward"));
@@ -155,79 +302,9 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void setupBrowser() {
-        mainWebView = findViewById(R.id.mainWebView);
-        etBrowserUrl = findViewById(R.id.etBrowserUrl);
-        browserProgress = findViewById(R.id.browserProgress);
-        Button btnBrowserHome = findViewById(R.id.btnBrowserHome);
-        Button btnBrowserGo = findViewById(R.id.btnBrowserGo);
-
-        WebSettings ws = mainWebView.getSettings();
-        ws.setJavaScriptEnabled(true);
-        ws.setDomStorageEnabled(true);
-        ws.setMediaPlaybackRequiresUserGesture(false);
-
-        mainWebView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public void onProgressChanged(WebView view, int newProgress) {
-                if (newProgress < 100) {
-                    browserProgress.setVisibility(View.VISIBLE);
-                    browserProgress.setProgress(newProgress);
-                } else {
-                    browserProgress.setVisibility(View.GONE);
-                }
-            }
-        });
-
-        mainWebView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                if (url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?")) {
-                    sendStreamUrlToTv(url);
-                    Toast.makeText(MainActivity.this, "تم كشف رابط الفيديو وإرساله للشاشة!", Toast.LENGTH_SHORT).show();
-                }
-                return false;
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                etBrowserUrl.setText(url);
-            }
-        });
-
-        btnBrowserHome.setOnClickListener(v -> switchTab(0));
-        btnBrowserGo.setOnClickListener(v -> loadUrlFromInput());
-
-        etBrowserUrl.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_GO) {
-                loadUrlFromInput();
-                return true;
-            }
-            return false;
-        });
-
-        mainWebView.loadUrl("https://www.google.com");
-    }
-
-    private void loadUrlFromInput() {
-        hideKeyboard();
-        String url = etBrowserUrl.getText().toString().trim();
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "https://www.google.com/search?q=" + url;
-        }
-        mainWebView.loadUrl(url);
-    }
-
     private void setupSettings() {
-        Button btnSave = findViewById(R.id.btnSaveSettings);
-
-        btnSave.setOnClickListener(v -> {
+        findViewById(R.id.btnSaveSettings).setOnClickListener(v -> {
             hideKeyboard();
-            etTvIpSettings.clearFocus();
-            etTvPortSettings.clearFocus();
-
             String ip = etTvIpSettings.getText().toString().trim();
             String port = etTvPortSettings.getText().toString().trim();
 
@@ -237,8 +314,8 @@ public class MainActivity extends Activity {
             prefs.edit().putString("tv_ip", ip).putString("tv_port", port).apply();
             updateIpDisplay();
 
-            Toast.makeText(MainActivity.this, "تم حفظ الإعدادات بنجاح ✓", Toast.LENGTH_SHORT).show();
-            switchTab(0);
+            Toast.makeText(MainActivity.this, "تم حفظ الإعدادات وتثبيت الاتصال ✓", Toast.LENGTH_SHORT).show();
+            showView(0); // العودة للمتصفح
         });
     }
 
@@ -275,12 +352,12 @@ public class MainActivity extends Activity {
             httpClient.newCall(req).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, java.io.IOException e) {
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تعذر الاتصال بالشاشة!", Toast.LENGTH_SHORT).show());
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تعذر الاتصال بالشاشة! تأكد من الـ IP المكتوب على التلفزيون", Toast.LENGTH_LONG).show());
                 }
 
                 @Override
                 public void onResponse(Call call, Response response) throws java.io.IOException {
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تم الإرسال والتشغيل ✓", Toast.LENGTH_SHORT).show());
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show());
                 }
             });
         } catch (Exception ignored) {}
@@ -338,14 +415,12 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (tabBrowser.getVisibility() == View.VISIBLE) {
-            if (mainWebView.canGoBack()) {
-                mainWebView.goBack();
-            } else {
-                switchTab(0);
-            }
-        } else if (tabSettings.getVisibility() == View.VISIBLE) {
-            switchTab(0);
+        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            drawerLayout.closeDrawer(GravityCompat.START);
+        } else if (viewMediaFiles.getVisibility() == View.VISIBLE || viewSettings.getVisibility() == View.VISIBLE) {
+            showView(0); // الرجوع للمتصفح
+        } else if (mainWebView.canGoBack()) {
+            mainWebView.goBack();
         } else {
             super.onBackPressed();
         }
