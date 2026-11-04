@@ -8,6 +8,7 @@ import android.app.DownloadManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.speech.RecognizerIntent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
@@ -15,6 +16,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
+import android.provider.OpenableColumns;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
@@ -27,6 +29,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.MenuItem;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.webkit.CookieManager;
@@ -45,6 +48,8 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.ImageButton;
+import android.widget.ScrollView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
@@ -72,6 +77,10 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
+import com.google.android.material.bottomnavigation.BottomNavigationView;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+
 public class BrowserActivity extends Activity {
 
     private final List<WebView> tabList = new ArrayList<>();
@@ -80,7 +89,21 @@ public class BrowserActivity extends Activity {
 
     private LinearLayout rootLayout;
     private LinearLayout topBar;
-    private LinearLayout bottomBar;
+    private LinearLayout browserControls;
+    private LinearLayout searchRow;
+    private BottomNavigationView bottomNavigation;
+    private FrameLayout mediaPanel;
+    private FrameLayout libraryPanel;
+    private TextView receiverStatus;
+    private TextView mediaPanelInfo;
+    private int currentSection = 0;
+    private final android.os.Handler receiverStatusHandler = new android.os.Handler();
+    private final Runnable receiverStatusRunnable = new Runnable() {
+        @Override public void run() {
+            refreshReceiverStatus();
+            receiverStatusHandler.postDelayed(this, 7000);
+        }
+    };
     private ProgressBar progressBar;
     private FrameLayout webContainer;
     private FrameLayout fullScreenContainer;
@@ -92,6 +115,13 @@ public class BrowserActivity extends Activity {
     private Button btnSniff;
     private Button btnCast;
     private Button btnTabs;
+    private ImageButton btnVoice;
+    private ImageButton btnClear;
+    private ImageButton btnGo;
+    private static final int REQUEST_VOICE_SEARCH = 7301;
+    private static final int NAV_HOME = 1;
+    private static final int NAV_MEDIA = 2;
+    private static final int NAV_LIBRARY = 3;
 
     private PowerManager.WakeLock wakeLock;
 
@@ -101,7 +131,7 @@ public class BrowserActivity extends Activity {
         public String format;
         public String posterUrl;
         public Bitmap posterBitmap;
-        public int mediaType; // 1: فيديو | 2: صوت | 0: غير معروف
+        public int mediaType;
         public boolean isAudio;
         public boolean isSelected = false;
 
@@ -116,6 +146,7 @@ public class BrowserActivity extends Activity {
     }
 
     private final List<CapturedMedia> capturedList = Collections.synchronizedList(new ArrayList<CapturedMedia>());
+    private final List<Uri> localMediaUris = new ArrayList<>();
     private final OkHttpClient client = new OkHttpClient();
     private String tvIp = "";
     private String lastDiscoveredPoster = "";
@@ -123,7 +154,10 @@ public class BrowserActivity extends Activity {
 
     private final List<String> adDomains = Arrays.asList(
             "doubleclick.net", "googleads", "pagead2", "adservice.google",
-            "googletagmanager", "adcolony", "criteo", "adnxs", "outbrain", "taboola"
+            "googletagmanager", "adcolony", "criteo", "adnxs", "outbrain",
+            "taboola", "popads", "popcash", "propellerads", "adsterra",
+            "exoclick", "smartadserver", "scorecardresearch",
+            "zedo", "adroll", "pubmatic", "rubiconproject"
     );
 
     @Override
@@ -144,77 +178,118 @@ public class BrowserActivity extends Activity {
         rootLayout.setOrientation(LinearLayout.VERTICAL);
         rootLayout.setBackgroundColor(Color.parseColor("#121212"));
 
+        // Header: app title and live receiver connection status.
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setPadding(8, 8, 8, 8);
-        topBar.setBackgroundColor(Color.parseColor("#1F1F1F"));
+        topBar.setPadding(dp(14), dp(9), dp(14), dp(9));
+        topBar.setBackgroundColor(Color.parseColor("#1B1B1B"));
         topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+
+        ImageView appIcon = new ImageView(this);
+        appIcon.setImageResource(com.aboezzat.share.R.drawable.ic_launcher);
+        appIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        LinearLayout.LayoutParams appIconParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+        appIconParams.setMargins(0, 0, dp(10), 0);
+        topBar.addView(appIcon, appIconParams);
+
+        LinearLayout titleBlock = new LinearLayout(this);
+        titleBlock.setOrientation(LinearLayout.VERTICAL);
+        titleBlock.setGravity(Gravity.CENTER_VERTICAL);
+        TextView appTitle = new TextView(this);
+        appTitle.setText("Abo Ezzat Cast");
+        appTitle.setTextColor(Color.WHITE);
+        appTitle.setTextSize(18);
+        appTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        titleBlock.addView(appTitle);
+
+        receiverStatus = new TextView(this);
+        receiverStatus.setText("● جاري فحص اتصال الريسيفر...");
+        receiverStatus.setTextColor(Color.GRAY);
+        receiverStatus.setTextSize(11);
+        titleBlock.addView(receiverStatus);
+        topBar.addView(titleBlock, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         Button btnMenu = new Button(this);
         btnMenu.setText("☰");
         btnMenu.setTextColor(Color.WHITE);
         btnMenu.setBackgroundColor(Color.TRANSPARENT);
-        btnMenu.setTextSize(20);
-        btnMenu.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showSideMenu();
-            }
-        });
-        topBar.addView(btnMenu, new LinearLayout.LayoutParams(95, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btnMenu.setTextSize(21);
+        btnMenu.setOnClickListener(v -> showSideMenu());
+        topBar.addView(btnMenu, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        rootLayout.addView(topBar);
+
+        // Fast URL / Google search row.
+        searchRow = new LinearLayout(this);
+        searchRow.setOrientation(LinearLayout.HORIZONTAL);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        searchRow.setPadding(dp(8), dp(7), dp(8), dp(7));
+        searchRow.setBackgroundColor(Color.parseColor("#121212"));
 
         etUrl = new EditText(this);
-        etUrl.setHint("اكتب الرابط أو ابحث...");
+        etUrl.setHint("ابحث في جوجل أو اكتب رابط");
         etUrl.setHintTextColor(Color.GRAY);
         etUrl.setTextColor(Color.WHITE);
-        etUrl.setTextSize(13);
+        etUrl.setTextSize(14);
         etUrl.setSingleLine(true);
-        etUrl.setBackgroundColor(Color.parseColor("#2A2A2A"));
-        etUrl.setPadding(15, 10, 15, 10);
-        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
-        urlParams.setMargins(5, 0, 5, 0);
-        etUrl.setOnEditorActionListener(new TextView.OnEditorActionListener() {
-            @Override
-            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
-                loadTargetUrl(etUrl.getText().toString().trim());
+        etUrl.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
+        etUrl.setBackgroundColor(Color.parseColor("#292929"));
+        etUrl.setPadding(dp(12), dp(9), dp(12), dp(9));
+        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        urlParams.setMargins(dp(3), 0, dp(3), 0);
+        etUrl.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_GO ||
+                    actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
+                performSearchOrGo();
                 return true;
             }
+            return false;
         });
-        topBar.addView(etUrl, urlParams);
+        searchRow.addView(etUrl, urlParams);
+
+        btnVoice = createSearchImageButton(android.R.drawable.ic_btn_speak_now, "بحث صوتي");
+        btnVoice.setOnClickListener(v -> startVoiceSearch());
+        searchRow.addView(btnVoice, new LinearLayout.LayoutParams(dp(42), dp(48)));
+
+        btnClear = createSearchImageButton(android.R.drawable.ic_menu_close_clear_cancel, "مسح النص");
+        btnClear.setVisibility(View.GONE);
+        btnClear.setOnClickListener(v -> etUrl.setText(""));
+        searchRow.addView(btnClear, new LinearLayout.LayoutParams(dp(38), dp(48)));
+
+        btnGo = createSearchImageButton(android.R.drawable.ic_media_play, "فتح الرابط أو البحث");
+        btnGo.setOnClickListener(v -> performSearchOrGo());
+        searchRow.addView(btnGo, new LinearLayout.LayoutParams(dp(42), dp(48)));
 
         btnSniff = new Button(this);
         btnSniff.setText("🎯");
-        btnSniff.setTextSize(16);
+        btnSniff.setTextSize(15);
         btnSniff.setTextColor(Color.WHITE);
         btnSniff.setBackgroundColor(Color.parseColor("#D32F2F"));
-        btnSniff.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                triggerManualSniff();
-            }
-        });
-        LinearLayout.LayoutParams sniffParams = new LinearLayout.LayoutParams(95, ViewGroup.LayoutParams.WRAP_CONTENT);
-        sniffParams.setMargins(0, 5, 5, 0);
-        topBar.addView(btnSniff, sniffParams);
+        btnSniff.setContentDescription("فحص الوسائط");
+        btnSniff.setOnClickListener(v -> triggerManualSniff());
+        searchRow.addView(btnSniff, new LinearLayout.LayoutParams(dp(44), dp(48)));
 
         btnCast = new Button(this);
         btnCast.setText("📺 0");
-        btnCast.setTextSize(13);
+        btnCast.setTextSize(12);
         btnCast.setTextColor(Color.BLACK);
         btnCast.setBackgroundColor(Color.parseColor("#FFC107"));
         btnCast.setVisibility(View.GONE);
-        btnCast.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showMediaListDialog();
-            }
-        });
-        topBar.addView(btnCast, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btnCast.setOnClickListener(v -> showMediaListDialog());
+        searchRow.addView(btnCast, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+        rootLayout.addView(searchRow);
 
-        rootLayout.addView(topBar);
+        etUrl.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (btnClear != null) btnClear.setVisibility(s.length() > 0 ? View.VISIBLE : View.GONE);
+            }
+            @Override public void afterTextChanged(android.text.Editable s) {}
+        });
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 6));
+        progressBar.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
         progressBar.setMax(100);
         progressBar.setProgress(0);
         progressBar.setVisibility(View.GONE);
@@ -225,52 +300,62 @@ public class BrowserActivity extends Activity {
         fullScreenContainer = new FrameLayout(this);
         fullScreenContainer.setVisibility(View.GONE);
         fullScreenContainer.setBackgroundColor(Color.BLACK);
-
         baseFrame.addView(webContainer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         baseFrame.addView(fullScreenContainer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        rootLayout.addView(baseFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
+        mediaPanel = new FrameLayout(this);
+        mediaPanel.setBackgroundColor(Color.parseColor("#121212"));
+        mediaPanel.setVisibility(View.GONE);
+        baseFrame.addView(mediaPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setBackgroundColor(Color.parseColor("#1F1F1F"));
-        bottomBar.setPadding(10, 5, 10, 5);
-        bottomBar.setGravity(Gravity.CENTER);
+        libraryPanel = new FrameLayout(this);
+        libraryPanel.setBackgroundColor(Color.parseColor("#121212"));
+        libraryPanel.setVisibility(View.GONE);
+        baseFrame.addView(libraryPanel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        bottomBar.addView(createBottomButton("◀", new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                WebView currentWeb = getCurrentWebView();
-                if (currentWeb != null && currentWeb.canGoBack()) currentWeb.goBack();
-            }
+        rootLayout.addView(baseFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // Keep browser navigation controls, but place them above the three main destinations.
+        browserControls = new LinearLayout(this);
+        browserControls.setOrientation(LinearLayout.HORIZONTAL);
+        browserControls.setGravity(Gravity.CENTER);
+        browserControls.setBackgroundColor(Color.parseColor("#1A1A1A"));
+        browserControls.setPadding(dp(5), dp(2), dp(5), dp(2));
+        browserControls.addView(createBottomButton("◀ رجوع", v -> {
+            WebView currentWeb = getCurrentWebView();
+            if (currentWeb != null && currentWeb.canGoBack()) currentWeb.goBack();
         }));
-
-        bottomBar.addView(createBottomButton("▶", new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                WebView currentWeb = getCurrentWebView();
-                if (currentWeb != null && currentWeb.canGoForward()) currentWeb.goForward();
-            }
+        browserControls.addView(createBottomButton("▶ التالي", v -> {
+            WebView currentWeb = getCurrentWebView();
+            if (currentWeb != null && currentWeb.canGoForward()) currentWeb.goForward();
         }));
-
-        bottomBar.addView(createBottomButton("🏠", new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                loadHomePage();
-            }
+        browserControls.addView(createBottomButton("⟳", v -> {
+            WebView currentWeb = getCurrentWebView();
+            if (currentWeb != null) currentWeb.reload();
         }));
+        browserControls.addView(createBottomButton("تبويبات", v -> showTabsDialog()));
+        rootLayout.addView(browserControls);
 
-        btnTabs = createBottomButton("[ 1 ]", new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showTabsDialog();
-            }
+        bottomNavigation = new BottomNavigationView(this);
+        bottomNavigation.setBackgroundColor(Color.parseColor("#202020"));
+        bottomNavigation.setItemIconTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
+        bottomNavigation.setItemTextColor(android.content.res.ColorStateList.valueOf(Color.WHITE));
+        bottomNavigation.getMenu().add(0, NAV_HOME, 0, "الرئيسية").setIcon(android.R.drawable.ic_menu_view);
+        bottomNavigation.getMenu().add(0, NAV_MEDIA, 1, "الوسائط").setIcon(android.R.drawable.ic_menu_gallery);
+        bottomNavigation.getMenu().add(0, NAV_LIBRARY, 2, "المكتبة").setIcon(android.R.drawable.ic_menu_save);
+        bottomNavigation.setLabelVisibilityMode(BottomNavigationView.LABEL_VISIBILITY_LABELED);
+        bottomNavigation.setOnItemSelectedListener(item -> {
+            switchMainSection(item.getItemId());
+            return true;
         });
-        bottomBar.addView(btnTabs);
-
-        rootLayout.addView(bottomBar);
+        rootLayout.addView(bottomNavigation, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(rootLayout);
+        bottomNavigation.setSelectedItemId(NAV_HOME);
+        buildMediaPanel();
+        buildLibraryPanel();
+        refreshReceiverStatus();
+        receiverStatusHandler.postDelayed(receiverStatusRunnable, 7000);
 
         String startUrl = "about:home";
         if (getIntent() != null) {
@@ -281,6 +366,383 @@ public class BrowserActivity extends Activity {
             }
         }
         addNewTab(startUrl);
+    }
+
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private ImageButton createSearchImageButton(int drawable, String description) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(drawable);
+        button.setContentDescription(description);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setPadding(dp(7), dp(7), dp(7), dp(7));
+        button.setColorFilter(Color.WHITE);
+        return button;
+    }
+
+    private void performSearchOrGo() {
+        String value = etUrl == null ? "" : etUrl.getText().toString().trim();
+        if (value.isEmpty()) {
+            etUrl.requestFocus();
+            return;
+        }
+        loadTargetUrl(value);
+        hideKeyboard();
+    }
+
+    private void hideKeyboard() {
+        try {
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(etUrl.getWindowToken(), 0);
+        } catch (Exception ignored) {}
+    }
+
+    private void startVoiceSearch() {
+        try {
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar");
+            intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "قل ما تريد البحث عنه");
+            startActivityForResult(intent, REQUEST_VOICE_SEARCH);
+        } catch (Exception e) {
+            Toast.makeText(this, "البحث الصوتي غير متاح على هذا الجهاز", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_VOICE_SEARCH && resultCode == RESULT_OK && data != null) {
+            ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            if (matches != null && !matches.isEmpty()) {
+                etUrl.setText(matches.get(0));
+                performSearchOrGo();
+            }
+        } else if (requestCode == 7302 && resultCode == RESULT_OK && data != null) {
+            int selected = 0;
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                    Uri uri = data.getClipData().getItemAt(i).getUri();
+                    addLocalMediaUri(uri, data.getFlags());
+                    selected++;
+                }
+            } else if (data.getData() != null) {
+                addLocalMediaUri(data.getData(), data.getFlags());
+                selected = 1;
+            }
+            buildMediaPanel();
+            Toast.makeText(this, selected > 0 ? "تمت إضافة " + selected + " ملف(ات) إلى قسم الوسائط" : "لم يتم اختيار ملف", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void switchMainSection(int sectionId) {
+        currentSection = sectionId;
+        boolean home = sectionId == NAV_HOME;
+        webContainer.setVisibility(home ? View.VISIBLE : View.GONE);
+        mediaPanel.setVisibility(sectionId == NAV_MEDIA ? View.VISIBLE : View.GONE);
+        libraryPanel.setVisibility(sectionId == NAV_LIBRARY ? View.VISIBLE : View.GONE);
+        browserControls.setVisibility(home ? View.VISIBLE : View.GONE);
+        if (sectionId == NAV_MEDIA) buildMediaPanel();
+        if (sectionId == NAV_LIBRARY) buildLibraryPanel();
+    }
+
+    private void refreshReceiverStatus() {
+        if (receiverStatus == null) return;
+        final String ip = tvIp == null ? "" : tvIp.trim();
+        if (ip.isEmpty()) {
+            receiverStatus.setText("● الريسيفر غير محدد");
+            receiverStatus.setTextColor(Color.GRAY);
+            return;
+        }
+        receiverStatus.setText("● جاري الاتصال: " + ip);
+        receiverStatus.setTextColor(Color.parseColor("#FFC107"));
+        AsyncTask.execute(() -> {
+            boolean connected = false;
+            Socket socket = null;
+            try {
+                socket = new Socket();
+                socket.connect(new InetSocketAddress(ip, 8081), 1800);
+                connected = true;
+            } catch (Exception ignored) {
+            } finally {
+                if (socket != null) try { socket.close(); } catch (Exception ignored) {}
+            }
+            final boolean result = connected;
+            runOnUiThread(() -> {
+                if (isFinishing() || receiverStatus == null) return;
+                if (result) {
+                    receiverStatus.setText("● متصل: " + ip);
+                    receiverStatus.setTextColor(Color.parseColor("#43D17A"));
+                } else {
+                    receiverStatus.setText("● غير متصل: " + ip);
+                    receiverStatus.setTextColor(Color.parseColor("#FF6B6B"));
+                }
+            });
+        });
+    }
+
+    private void addLocalMediaUri(Uri uri, int intentFlags) {
+        if (uri == null) return;
+        if (!localMediaUris.contains(uri)) localMediaUris.add(uri);
+        try {
+            int permissionFlags = intentFlags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            getContentResolver().takePersistableUriPermission(uri, permissionFlags);
+        } catch (Exception ignored) {}
+    }
+
+    private String getLocalMediaName(Uri uri) {
+        String name = uri == null ? "ملف وسائط" : uri.getLastPathSegment();
+        if (uri == null) return name;
+        android.database.Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    String displayName = cursor.getString(index);
+                    if (displayName != null && !displayName.trim().isEmpty()) name = displayName;
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return name == null ? "ملف وسائط" : name;
+    }
+
+    private void openLocalMedia(Uri uri) {
+        try {
+            String mime = getContentResolver().getType(uri);
+            if (mime == null) mime = "*/*";
+            Intent viewIntent = new Intent(Intent.ACTION_VIEW);
+            viewIntent.setDataAndType(uri, mime);
+            viewIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(viewIntent, "فتح الملف باستخدام"));
+        } catch (Exception e) {
+            Toast.makeText(this, "لا يوجد تطبيق مناسب لفتح هذا الملف", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void buildMediaPanel() {
+        if (mediaPanel == null) return;
+        mediaPanel.removeAllViews();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(20), dp(20), dp(20));
+        content.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+
+        TextView heading = new TextView(this);
+        heading.setText("وسائط الهاتف");
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(22);
+        heading.setTypeface(null, android.graphics.Typeface.BOLD);
+        content.addView(heading);
+
+        mediaPanelInfo = new TextView(this);
+        mediaPanelInfo.setText("افتح ملفات الفيديو والصور والصوت من جهازك، أو اعرض الوسائط التي اكتشفها المتصفح.");
+        mediaPanelInfo.setTextColor(Color.LTGRAY);
+        mediaPanelInfo.setTextSize(14);
+        mediaPanelInfo.setPadding(0, dp(12), 0, dp(18));
+        content.addView(mediaPanelInfo);
+
+        Button openLocal = new Button(this);
+        openLocal.setText("📁 فتح ملفات الهاتف");
+        openLocal.setOnClickListener(v -> openLocalMediaPicker());
+        content.addView(openLocal, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        Button discovered = new Button(this);
+        discovered.setText("📺 الوسائط المكتشفة في المتصفح (" + capturedList.size() + ")");
+        discovered.setOnClickListener(v -> showMediaListDialog());
+        LinearLayout.LayoutParams discoveredParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        discoveredParams.setMargins(0, dp(10), 0, 0);
+        content.addView(discovered, discoveredParams);
+
+        TextView note = new TextView(this);
+        note.setText("اختيار ملف محلي يفتح منتقي ملفات أندرويد، ويمكن تحديد أكثر من ملف. اضغط على ملف مختار لفتحه بالتطبيق المناسب.");
+        note.setTextColor(Color.GRAY);
+        note.setTextSize(12);
+        note.setPadding(0, dp(16), 0, dp(10));
+        content.addView(note);
+
+        if (!localMediaUris.isEmpty()) {
+            TextView selectedHeading = new TextView(this);
+            selectedHeading.setText("📂 الملفات المختارة (" + localMediaUris.size() + ")");
+            selectedHeading.setTextColor(Color.parseColor("#FFC107"));
+            selectedHeading.setTextSize(16);
+            selectedHeading.setPadding(0, dp(12), 0, dp(8));
+            content.addView(selectedHeading);
+            for (Uri uri : new ArrayList<>(localMediaUris)) {
+                TextView fileRow = new TextView(this);
+                fileRow.setText("▶  " + getLocalMediaName(uri));
+                fileRow.setTextColor(Color.WHITE);
+                fileRow.setTextSize(14);
+                fileRow.setPadding(dp(12), dp(12), dp(12), dp(12));
+                fileRow.setBackgroundColor(Color.parseColor("#202020"));
+                LinearLayout.LayoutParams fileParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                fileParams.setMargins(0, dp(3), 0, dp(3));
+                content.addView(fileRow, fileParams);
+                fileRow.setOnClickListener(v -> openLocalMedia(uri));
+                fileRow.setOnLongClickListener(v -> {
+                    localMediaUris.remove(uri);
+                    buildMediaPanel();
+                    Toast.makeText(this, "تم حذف الملف من القائمة", Toast.LENGTH_SHORT).show();
+                    return true;
+                });
+            }
+        }
+        mediaPanel.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void openLocalMediaPicker() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(intent, 7302);
+        } catch (Exception e) {
+            Toast.makeText(this, "تعذر فتح منتقي ملفات الهاتف", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void buildLibraryPanel() {
+        if (libraryPanel == null) return;
+        libraryPanel.removeAllViews();
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(16), dp(16), dp(16));
+
+        TextView heading = new TextView(this);
+        heading.setText("المكتبة");
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(22);
+        heading.setTypeface(null, android.graphics.Typeface.BOLD);
+        content.addView(heading);
+
+        Button saveCurrent = new Button(this);
+        saveCurrent.setText("☆ إضافة الصفحة الحالية للمفضلة");
+        saveCurrent.setOnClickListener(v -> saveCurrentPageAsFavorite());
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        saveParams.setMargins(0, dp(10), 0, dp(12));
+        content.addView(saveCurrent, saveParams);
+
+        addLibrarySection(content, "⭐ المفضلة", "browser_favorites", true);
+        addLibrarySection(content, "🕘 سجل التصفح", "browser_history", false);
+        scroll.addView(content);
+        libraryPanel.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void addLibrarySection(LinearLayout parent, String headingText, String prefKey, boolean favorites) {
+        TextView heading = new TextView(this);
+        heading.setText(headingText);
+        heading.setTextColor(Color.parseColor("#FFC107"));
+        heading.setTextSize(17);
+        heading.setPadding(0, dp(10), 0, dp(8));
+        parent.addView(heading);
+
+        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
+        String saved = prefs.getString(prefKey, "");
+        if (saved == null || saved.trim().isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText(favorites ? "لا توجد صفحات في المفضلة حتى الآن." : "سجل التصفح سيظهر هنا بعد زيارة المواقع.");
+            empty.setTextColor(Color.GRAY);
+            empty.setPadding(dp(8), dp(5), dp(8), dp(12));
+            parent.addView(empty);
+            return;
+        }
+
+        String[] entries = saved.split("\\n");
+        int shown = 0;
+        for (String entry : entries) {
+            if (entry.trim().isEmpty() || shown >= 40) continue;
+            String[] parts = entry.split("\\|\\|\\|", 2);
+            String title = parts.length > 1 ? parts[0] : entry;
+            String url = parts.length > 1 ? parts[1] : entry;
+            TextView row = new TextView(this);
+            row.setText("• " + title + "\n" + url);
+            row.setTextColor(Color.WHITE);
+            row.setTextSize(13);
+            row.setPadding(dp(12), dp(12), dp(12), dp(12));
+            row.setBackgroundColor(Color.parseColor(shown % 2 == 0 ? "#202020" : "#181818"));
+            row.setOnClickListener(v -> {
+                bottomNavigation.setSelectedItemId(NAV_HOME);
+                loadTargetUrl(url);
+            });
+            if (favorites) {
+                row.setOnLongClickListener(v -> {
+                    removeLibraryEntry(prefKey, entry);
+                    buildLibraryPanel();
+                    Toast.makeText(this, "تم حذف العنصر من المفضلة", Toast.LENGTH_SHORT).show();
+                    return true;
+                });
+            }
+            parent.addView(row);
+            shown++;
+        }
+        if (favorites && shown > 0) {
+            TextView hint = new TextView(this);
+            hint.setText("اضغط مطولاً على عنصر لحذفه من المفضلة.");
+            hint.setTextColor(Color.GRAY);
+            hint.setTextSize(11);
+            hint.setPadding(0, dp(5), 0, dp(10));
+            parent.addView(hint);
+        }
+    }
+
+    private void saveCurrentPageAsFavorite() {
+        WebView current = getCurrentWebView();
+        if (current == null || current.getUrl() == null || current.getUrl().startsWith("about:")) {
+            Toast.makeText(this, "افتح صفحة ويب أولاً لإضافتها للمفضلة", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String title = current.getTitle() == null ? current.getUrl() : current.getTitle();
+        saveLibraryEntry("browser_favorites", title, current.getUrl(), 100);
+        buildLibraryPanel();
+        Toast.makeText(this, "تمت إضافة الصفحة للمفضلة ⭐", Toast.LENGTH_SHORT).show();
+    }
+
+    private void saveHistoryEntry(String url, String title) {
+        if (url == null || url.isEmpty() || url.startsWith("about:")) return;
+        saveLibraryEntry("browser_history", title == null || title.trim().isEmpty() ? url : title, url, 60);
+    }
+
+    private void saveLibraryEntry(String key, String title, String url, int maxEntries) {
+        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
+        String entry = (title == null ? url : title.replace("\n", " ")) + "|||" + url;
+        String old = prefs.getString(key, "");
+        ArrayList<String> list = new ArrayList<>();
+        if (old != null && !old.isEmpty()) {
+            for (String item : old.split("\\n")) {
+                if (!item.equals(entry) && !item.trim().isEmpty()) list.add(item);
+            }
+        }
+        list.add(0, entry);
+        while (list.size() > maxEntries) list.remove(list.size() - 1);
+        StringBuilder out = new StringBuilder();
+        for (String item : list) {
+            if (out.length() > 0) out.append("\n");
+            out.append(item);
+        }
+        prefs.edit().putString(key, out.toString()).apply();
+    }
+
+    private void removeLibraryEntry(String key, String entry) {
+        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
+        String old = prefs.getString(key, "");
+        ArrayList<String> list = new ArrayList<>();
+        if (old != null) for (String item : old.split("\\n")) if (!item.equals(entry)) list.add(item);
+        StringBuilder out = new StringBuilder();
+        for (String item : list) {
+            if (out.length() > 0) out.append("\n");
+            out.append(item);
+        }
+        prefs.edit().putString(key, out.toString()).apply();
     }
 
     private Button createBottomButton(String text, View.OnClickListener listener) {
@@ -301,19 +763,16 @@ public class BrowserActivity extends Activity {
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus(View.FOCUS_DOWN);
-        webView.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                    case MotionEvent.ACTION_UP:
-                        if (!v.hasFocus()) {
-                            v.requestFocus();
-                        }
-                        break;
-                }
-                return false;
+        webView.setOnTouchListener((v, event) -> {
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                case MotionEvent.ACTION_UP:
+                    if (!v.hasFocus()) {
+                        v.requestFocus();
+                    }
+                    break;
             }
+            return false;
         });
 
         WebSettings settings = webView.getSettings();
@@ -322,13 +781,17 @@ public class BrowserActivity extends Activity {
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
 
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setSupportZoom(true);
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
 
-        settings.setUserAgentString("Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36");
+        // User-Agent رسمي كامل مطابق للمتصفحات لفتح تيك توك لايف بدون تسجيل دخول
+        settings.setUserAgentString("Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36");
         settings.setGeolocationEnabled(true);
 
         CookieManager cookieManager = CookieManager.getInstance();
@@ -350,6 +813,7 @@ public class BrowserActivity extends Activity {
                         progressBar.setVisibility(View.GONE);
                     }
                 }
+                injectAdKiller(view);
             }
 
             @Override
@@ -359,12 +823,7 @@ public class BrowserActivity extends Activity {
 
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        request.grant(request.getResources());
-                    }
-                });
+                runOnUiThread(() -> request.grant(request.getResources()));
             }
 
             @Override
@@ -378,7 +837,9 @@ public class BrowserActivity extends Activity {
 
                 topBar.setVisibility(View.GONE);
                 progressBar.setVisibility(View.GONE);
-                bottomBar.setVisibility(View.GONE);
+                searchRow.setVisibility(View.GONE);
+                browserControls.setVisibility(View.GONE);
+                bottomNavigation.setVisibility(View.GONE);
                 webContainer.setVisibility(View.GONE);
 
                 fullScreenContainer.addView(customView);
@@ -402,7 +863,9 @@ public class BrowserActivity extends Activity {
                 }
 
                 topBar.setVisibility(View.VISIBLE);
-                bottomBar.setVisibility(View.VISIBLE);
+                searchRow.setVisibility(View.VISIBLE);
+                browserControls.setVisibility(currentSection == NAV_HOME ? View.VISIBLE : View.GONE);
+                bottomNavigation.setVisibility(View.VISIBLE);
                 webContainer.setVisibility(View.VISIBLE);
 
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
@@ -412,9 +875,19 @@ public class BrowserActivity extends Activity {
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public void doUpdateVisitedHistory(WebView view, String loadedUrl, boolean isReload) {
+                super.doUpdateVisitedHistory(view, loadedUrl, isReload);
+                injectAdKiller(view);
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String targetUrl = request.getUrl().toString();
-                if (targetUrl.contains("onelink.me") || targetUrl.contains("snssdk") || targetUrl.startsWith("intent://") || !targetUrl.startsWith("http")) {
+                String lower = targetUrl.toLowerCase();
+
+                if (lower.contains("popads") || lower.contains("bet365") || lower.contains("redirect") ||
+                    targetUrl.contains("onelink.me") || targetUrl.contains("snssdk") || 
+                    targetUrl.startsWith("intent://") || (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://"))) {
                     return true;
                 }
                 return false;
@@ -433,7 +906,8 @@ public class BrowserActivity extends Activity {
 
                 boolean isJunk = lowerUrl.contains(".ts") || lowerUrl.contains("seg-") ||
                                  lowerUrl.contains(".js") || lowerUrl.contains(".css") ||
-                                 lowerUrl.contains("preview") || lowerUrl.contains("rsrc.php");
+                                 lowerUrl.contains("preview") || lowerUrl.contains("rsrc.php") ||
+                                 lowerUrl.contains("google_ads") || lowerUrl.contains("ad-interrupting");
 
                 if (!isJunk) {
                     if (lowerUrl.contains(".mp4") || lowerUrl.contains(".flv") || 
@@ -481,27 +955,8 @@ public class BrowserActivity extends Activity {
                     etUrl.setText(loadedUrl.equals("about:home") ? "" : loadedUrl);
                     tabTitles.set(currentTabIndex, view.getTitle() != null ? view.getTitle() : "علامة تبويب");
                 }
-
-                String js = "javascript:(function(){" +
-                        "try{" +
-                        "  var title = '';" +
-                        "  var poster = '';" +
-                        "  var metaTitle = document.querySelector('meta[property=\"og:title\"], meta[name=\"twitter:title\"]');" +
-                        "  if(metaTitle && metaTitle.content){ title = metaTitle.content; }" +
-                        "  var metaImg = document.querySelector('meta[property=\"og:image\"], meta[name=\"twitter:image\"]');" +
-                        "  if(metaImg && metaImg.content){ poster = metaImg.content; }" +
-                        "  window.AboEzzatBridge.onMetaFound(title, poster);" +
-                        "}catch(e){}" +
-                        "try{" +
-                        "  var origPlay = HTMLMediaElement.prototype.play;" +
-                        "  HTMLMediaElement.prototype.play = function(){" +
-                        "    var src = this.currentSrc || this.src;" +
-                        "    if(src && src.indexOf('http') === 0){ window.AboEzzatBridge.onVideoPlayingWithPoster(src, '', ''); }" +
-                        "    return origPlay.apply(this, arguments);" +
-                        "  };" +
-                        "}catch(e){}" +
-                        "})()";
-                view.loadUrl(js);
+                saveHistoryEntry(loadedUrl, view.getTitle());
+                injectAdKiller(view);
             }
         });
 
@@ -517,6 +972,58 @@ public class BrowserActivity extends Activity {
         }
     }
 
+    private void injectAdKiller(WebView view) {
+        String adBlockAndSniffJs = "javascript:(function(){" +
+                "  try {" +
+                "    var style = document.getElementById('abo-ezzat-adblock');" +
+                "    if(!style){" +
+                "      style = document.createElement('style');" +
+                "      style.id = 'abo-ezzat-adblock';" +
+                "      style.innerHTML = '.ytp-ad-overlay-container, .ytp-ad-message-container, " +
+                "                         ytd-promoted-sparkles-web-renderer, ytd-banner-promo-renderer, " +
+                "                         ytd-ad-slot-renderer, .ad-container, .ad-div, ytd-in-feed-ad-layout-renderer, " +
+                "                         ytm-promoted-sparkles-web-renderer, .ytp-ad-action-interstitial, " +
+                "                         [id^=\"google_ads_\"], iframe[src*=\"doubleclick\"] { display: none !important; width:0px!important; height:0px!important; }';" +
+                "      document.head.appendChild(style);" +
+                "    }" +
+                "  } catch(e){}" +
+                "  if (!window.AboEzzatKillerLoop) {" +
+                "    window.AboEzzatKillerLoop = setInterval(function(){" +
+                "      try {" +
+                "        var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .videoAdUiSkipButton');" +
+                "        if (skipBtn) { skipBtn.click(); }" +
+                "        var adVideos = document.querySelectorAll('video');" +
+                "        for(var i=0; i<adVideos.length; i++){" +
+                "          var v = adVideos[i];" +
+                "          if (document.querySelector('.ad-interrupting, .ad-showing') || v.classList.contains('ad-interrupting')) {" +
+                "            v.muted = true;" +
+                "            if(!isNaN(v.duration) && v.duration > 0){ v.currentTime = v.duration + 1; }" +
+                "          }" +
+                "        }" +
+                "      } catch(e) {}" +
+                "    }, 200);" +
+                "  }" +
+                "  try{" +
+                "    var title = ''; var poster = '';" +
+                "    var metaTitle = document.querySelector('meta[property=\"og:title\"], meta[name=\"twitter:title\"]');" +
+                "    if(metaTitle && metaTitle.content){ title = metaTitle.content; }" +
+                "    var metaImg = document.querySelector('meta[property=\"og:image\"], meta[name=\"twitter:image\"]');" +
+                "    if(metaImg && metaImg.content){ poster = metaImg.content; }" +
+                "    window.AboEzzatBridge.onMetaFound(title, poster);" +
+                "  }catch(e){}" +
+                "  try{" +
+                "    var origPlay = HTMLMediaElement.prototype.play;" +
+                "    HTMLMediaElement.prototype.play = function(){" +
+                "      var src = this.currentSrc || this.src;" +
+                "      if(src && src.indexOf('http') === 0 && !this.classList.contains('ad-interrupting')){" +
+                "        window.AboEzzatBridge.onVideoPlayingWithPoster(src, '', '');" +
+                "      }" +
+                "      return origPlay.apply(this, arguments);" +
+                "    };" +
+                "  }catch(e){}" +
+                "})()";
+        view.evaluateJavascript(adBlockAndSniffJs, null);
+    }
     private class JsBridge {
         @JavascriptInterface
         public void onMetaFound(String title, String posterUrl) {
@@ -562,19 +1069,7 @@ public class BrowserActivity extends Activity {
             }
         }
 
-        @JavascriptInterface
-        public void onNewCustomSite(String name, String siteUrl) {
-            saveCustomSite(name, siteUrl);
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    loadHomePage();
-                }
-            });
-        }
-    }
-
-    private synchronized void addCapturedMedia(String url, String title, String format, String posterUrl, int mediaType) {
+        private synchronized void addCapturedMedia(String url, String title, String format, String posterUrl, int mediaType) {
         for (CapturedMedia item : capturedList) {
             if (item.url.equalsIgnoreCase(url) || (item.url.contains("manifest") && url.contains("manifest"))) {
                 if (item.posterUrl == null && posterUrl != null) {
@@ -598,18 +1093,15 @@ public class BrowserActivity extends Activity {
             loadThumbnailAsync(newMedia);
         }
 
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                btnCast.setVisibility(View.VISIBLE);
-                btnCast.setText("📺 " + capturedList.size());
+        runOnUiThread(() -> {
+            btnCast.setVisibility(View.VISIBLE);
+            btnCast.setText("📺 " + capturedList.size());
 
-                Animation blink = new AlphaAnimation(0.3f, 1.0f);
-                blink.setDuration(350);
-                blink.setRepeatMode(Animation.REVERSE);
-                blink.setRepeatCount(4);
-                btnCast.startAnimation(blink);
-            }
+            Animation blink = new AlphaAnimation(0.3f, 1.0f);
+            blink.setDuration(350);
+            blink.setRepeatMode(Animation.REVERSE);
+            blink.setRepeatCount(4);
+            btnCast.startAnimation(blink);
         });
     }
 
@@ -634,19 +1126,17 @@ public class BrowserActivity extends Activity {
             }
         }
     }
+
     private void loadThumbnailAsync(final CapturedMedia media) {
-        AsyncTask.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    URL u = new URL(media.posterUrl);
-                    HttpURLConnection conn = (HttpURLConnection) u.openConnection();
-                    conn.setDoInput(true);
-                    conn.connect();
-                    InputStream input = conn.getInputStream();
-                    media.posterBitmap = BitmapFactory.decodeStream(input);
-                } catch (Exception ignored) {}
-            }
+        AsyncTask.execute(() -> {
+            try {
+                URL u = new URL(media.posterUrl);
+                HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+                conn.setDoInput(true);
+                conn.connect();
+                InputStream input = conn.getInputStream();
+                media.posterBitmap = BitmapFactory.decodeStream(input);
+            } catch (Exception ignored) {}
         });
     }
 
@@ -690,7 +1180,7 @@ public class BrowserActivity extends Activity {
         }
         etUrl.setText(target);
 
-        Map<String, String> extraHeaders = new HashMap<String, String>();
+        Map<String, String> extraHeaders = new HashMap<>();
         extraHeaders.put("Accept-Language", "ar-EG,ar;q=0.9,en-US;q=0.8");
 
         current.loadUrl(target, extraHeaders);
@@ -706,40 +1196,75 @@ public class BrowserActivity extends Activity {
         etUrl.setText("");
 
         SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
-        Set<String> customSites = prefs.getStringSet("custom_sites", new HashSet<String>());
+        Set<String> customSites = prefs.getStringSet("custom_sites", new HashSet<>());
 
         StringBuilder customCards = new StringBuilder();
         if (customSites != null) {
             for (String entry : customSites) {
                 String[] parts = entry.split("\\|", 2);
                 if (parts.length == 2) {
-                    customCards.append("<a href='").append(parts[1]).append("' class='card'>").append(parts[0]).append("</a>");
+                    customCards.append("<a href='").append(parts[1]).append("' class='card'>")
+                               .append("<div class='icon-circle' style='background:#2C3E50;'>🌐</div>")
+                               .append("<span>").append(parts[0]).append("</span>")
+                               .append("</a>");
                 }
             }
         }
 
+        // شعارات SVG مدمجة ومباشرة لا تتأثر بالنت ولا تنكسر أبداً
         String homeHtml = "<html dir='rtl'><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
-                "<style>body{background:#121212;color:white;font-family:sans-serif;text-align:center;padding:15px;margin:0;}" +
-                ".grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:12px;margin-top:20px;}" +
-                ".card{background:#1E1E1E;padding:14px 5px;border-radius:10px;text-decoration:none;color:white;font-size:13px;display:block;border:1px solid #333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}" +
-                ".add-btn{background:#00897B;padding:12px;border-radius:10px;color:white;display:block;margin-top:20px;text-decoration:none;font-weight:bold;cursor:pointer;}" +
-                ".search-box{width:92%;padding:12px;border-radius:25px;border:none;margin-top:20px;font-size:14px;text-align:center;background:#2A2A2A;color:white;outline:none;}" +
+                "<style>" +
+                "body{background:#121212;color:white;font-family:sans-serif;text-align:center;padding:15px;margin:0;}" +
+                ".grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:14px;margin-top:20px;}" +
+                ".card{background:#1E1E1E;padding:12px 6px;border-radius:12px;text-decoration:none;color:white;font-size:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid #2A2A2A;}" +
+                ".card:active{transform:scale(0.95);background:#252525;}" +
+                ".card img, .card svg{width:42px;height:42px;border-radius:10px;margin-bottom:8px;object-fit:cover;}" +
+                ".card span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;font-weight:bold;}" +
+                ".icon-circle{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:8px;}" +
+                ".add-btn{background:#00897B;padding:12px;border-radius:10px;color:white;display:block;margin-top:22px;text-decoration:none;font-weight:bold;cursor:pointer;border:1px solid #00A896;}" +
+                ".search-box{width:92%;padding:12px;border-radius:25px;border:1px solid #333;margin-top:20px;font-size:14px;text-align:center;background:#2A2A2A;color:white;outline:none;}" +
                 "</style></head><body>" +
-                "<h3 style='color:#00B0FF;margin-top:15px;'>Abo Ezzat Browser</h3>" +
+                "<h3 style='color:#00B0FF;margin-top:15px;font-size:20px;'>Abo Ezzat Browser</h3>" +
                 "<form action='https://www.google.com.eg/search' method='get'>" +
                 "<input type='hidden' name='gl' value='eg'>" +
                 "<input type='hidden' name='hl' value='ar'>" +
                 "<input type='text' name='q' class='search-box' placeholder='ابحث في جوجل مصر...'>" +
                 "</form>" +
                 "<div class='grid'>" +
-                "<a href='https://www.tiktok.com' class='card'>تيك توك</a>" +
-                "<a href='https://www.facebook.com' class='card'>فيسبوك</a>" +
-                "<a href='https://www.instagram.com' class='card'>إنستجرام</a>" +
-                "<a href='https://m.youtube.com' class='card'>يوتيوب</a>" +
-                "<a href='https://www.threads.net' class='card'>ثريد</a>" +
-                "<a href='https://x.com' class='card'>تويتر / X</a>" +
+
+                // 1. تيك توك بشعار SVG داخلي
+                "<a href='https://www.tiktok.com' class='card'>" +
+                "<div class='icon-circle' style='background:#000;'><svg viewBox='0 0 24 24' width='28' height='28' fill='white'><path d='M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.29 0 .58.04.86.11V9.4a6.33 6.33 0 0 0-.86-.06 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.34-6.34V9.05a8.27 8.27 0 0 0 3.77.92V6.69z'/></svg></div>" +
+                "<span>تيك توك</span></a>" +
+
+                // 2. فيسبوك
+                "<a href='https://www.facebook.com' class='card'>" +
+                "<div class='icon-circle' style='background:#1877F2;'><svg viewBox='0 0 24 24' width='28' height='28' fill='white'><path d='M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z'/></svg></div>" +
+                "<span>فيسبوك</span></a>" +
+
+                // 3. إنستجرام
+                "<a href='https://www.instagram.com' class='card'>" +
+                "<div class='icon-circle' style='background:linear-gradient(45deg, #f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%);'><svg viewBox='0 0 24 24' width='28' height='28' fill='white'><path d='M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z'/></svg></div>" +
+                "<span>إنستجرام</span></a>" +
+
+                // 4. يوتيوب
+                "<a href='https://m.youtube.com' class='card'>" +
+                "<div class='icon-circle' style='background:#FF0000;'><svg viewBox='0 0 24 24' width='28' height='28' fill='white'><path d='M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z'/></svg></div>" +
+                "<span>يوتيوب</span></a>" +
+
+                // 5. ثريدز بشعار SVG مدمج
+                "<a href='https://www.threads.net' class='card'>" +
+                "<div class='icon-circle' style='background:#000;'><svg viewBox='0 0 24 24' width='28' height='28' fill='white'><path d='M12.186 24h-.007c-3.581-.026-6.33-1.157-8.172-3.363-1.799-2.153-2.583-5.227-2.33-9.136.486-7.509 6.077-11.458 10.536-11.5 3.327-.008 6.037 1.096 8.055 3.284 1.954 2.119 2.946 5.105 2.949 8.877v.64h-3.667v-.64c-.002-2.82-.705-4.97-2.09-6.39-1.425-1.46-3.414-2.19-5.912-2.18-3.483.03-7.502 3.03-7.876 8.8-.204 3.14.375 5.51 1.724 7.04 1.343 1.52 3.375 2.3 6.038 2.32 2.502.02 4.492-.74 5.913-2.27.653-.7 1.127-1.57 1.41-2.58-1.58-.78-2.63-2.1-2.63-3.77 0-2.45 2.05-4.45 4.56-4.45 2.52 0 4.57 2 4.57 4.45 0 3.73-2.43 6.64-6.34 7.55-1.92.45-4.04.57-6.23.32z'/></svg></div>" +
+                "<span>ثريدز</span></a>" +
+
+                // 6. تويتر / X بشعار SVG مدمج
+                "<a href='https://x.com' class='card'>" +
+                "<div class='icon-circle' style='background:#000;'><svg viewBox='0 0 24 24' width='26' height='26' fill='white'><path d='M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z'/></svg></div>" +
+                "<span>تويتر / X</span></a>" +
+
                 customCards.toString() +
                 "</div>" +
+
                 "<div class='add-btn' onclick='promptAddSite()'>➕ إضافة موقع جديد للرئيسية</div>" +
                 "<script>" +
                 "function promptAddSite() {" +
@@ -756,7 +1281,7 @@ public class BrowserActivity extends Activity {
 
     private void saveCustomSite(String name, String url) {
         SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
-        Set<String> set = new HashSet<String>(prefs.getStringSet("custom_sites", new HashSet<String>()));
+        Set<String> set = new HashSet<>(prefs.getStringSet("custom_sites", new HashSet<>()));
         set.add(name + "|" + url);
         prefs.edit().putStringSet("custom_sites", set).apply();
     }
@@ -786,7 +1311,7 @@ public class BrowserActivity extends Activity {
                 "var vids = document.getElementsByTagName('video');" +
                 "for(var i=0; i<vids.length; i++){" +
                 "  var src = vids[i].currentSrc || vids[i].src;" +
-                "  if(src && src.indexOf('http') === 0){" +
+                "  if(src && src.indexOf('http') === 0 && !vids[i].classList.contains('ad-interrupting')){" +
                 "    window.AboEzzatBridge.onVideoPlayingWithPoster(src, title || document.title, poster);" +
                 "  }" +
                 "}" +
@@ -891,12 +1416,9 @@ public class BrowserActivity extends Activity {
                 }
                 row.addView(thumb);
 
-                row.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        dialog.dismiss();
-                        showMediaOptionsDialog(item);
-                    }
+                row.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    showMediaOptionsDialog(item);
                 });
 
                 return row;
@@ -905,78 +1427,61 @@ public class BrowserActivity extends Activity {
 
         main.addView(listView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 650));
 
-        // 1. زر البث الفوري المدمج
         Button btnCastNow = new Button(this);
         btnCastNow.setText("📺 بث فوري على الشاشة (دمج وتشغيل)");
         btnCastNow.setTextColor(Color.BLACK);
         btnCastNow.setBackgroundColor(Color.parseColor("#FFD700"));
         btnCastNow.setTextSize(14);
-        btnCastNow.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                dialog.dismiss();
-                castSelectedTracksManually();
-            }
+        btnCastNow.setOnClickListener(v -> {
+            dialog.dismiss();
+            castSelectedTracksManually();
         });
         LinearLayout.LayoutParams btnCastParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         btnCastParams.setMargins(0, 10, 0, 5);
         main.addView(btnCastNow, btnCastParams);
 
-        // صف التحميل: زر تحميل فيديو + زر تحميل صوت
         LinearLayout dlRow = new LinearLayout(this);
         dlRow.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams dlRowParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         dlRowParams.setMargins(0, 5, 0, 5);
         dlRow.setLayoutParams(dlRowParams);
 
-        // 2. زر تحميل الفيديو
         Button btnDlVideo = new Button(this);
         btnDlVideo.setText("🎬 تحميل الفيديو");
         btnDlVideo.setTextColor(Color.WHITE);
         btnDlVideo.setBackgroundColor(Color.parseColor("#2E7D32"));
         btnDlVideo.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
-        btnDlVideo.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                dialog.dismiss();
-                downloadSelectedMedia(false);
-            }
+        btnDlVideo.setOnClickListener(v -> {
+            dialog.dismiss();
+            downloadSelectedMedia(false);
         });
         dlRow.addView(btnDlVideo);
 
         View spacer = new View(this);
         dlRow.addView(spacer, new LinearLayout.LayoutParams(10, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 3. زر تحميل الصوت
         Button btnDlAudio = new Button(this);
         btnDlAudio.setText("🎵 تحميل الصوت");
         btnDlAudio.setTextColor(Color.WHITE);
         btnDlAudio.setBackgroundColor(Color.parseColor("#E65100"));
         btnDlAudio.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
-        btnDlAudio.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                dialog.dismiss();
-                downloadSelectedMedia(true);
-            }
+        btnDlAudio.setOnClickListener(v -> {
+            dialog.dismiss();
+            downloadSelectedMedia(true);
         });
         dlRow.addView(btnDlAudio);
 
         main.addView(dlRow);
 
-        // زر مسح القائمة
         Button btnClear = new Button(this);
         btnClear.setText("مسح القائمة");
         btnClear.setTextColor(Color.LTGRAY);
         btnClear.setBackgroundColor(Color.parseColor("#2A2A2A"));
-        btnClear.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                capturedList.clear();
-                btnCast.setText("📺 0");
-                btnCast.setVisibility(View.GONE);
-                dialog.dismiss();
-            }
+        btnClear.setOnClickListener(v -> {
+            capturedList.clear();
+            btnCast.setText("📺 0");
+            btnCast.setVisibility(View.GONE);
+            dialog.dismiss();
         });
         LinearLayout.LayoutParams btnClearParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         btnClearParams.setMargins(0, 5, 0, 0);
@@ -1075,7 +1580,7 @@ public class BrowserActivity extends Activity {
         try {
             String endpoint = tvIp;
             if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) endpoint = "http://" + endpoint;
-            if (!endpoint.contains(":8080")) endpoint += ":8080";
+            if (!endpoint.contains(":8081")) endpoint += ":8081";
 
             String fullUrl = endpoint + "/?video=" + URLEncoder.encode(videoTrack, "UTF-8") 
                                       + "&audio=" + URLEncoder.encode(audioTrack, "UTF-8");
@@ -1105,18 +1610,15 @@ public class BrowserActivity extends Activity {
 
         new AlertDialog.Builder(this)
                 .setTitle(media.title)
-                .setItems(options, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        if (which == 0) {
-                            mergeAndCastToTv();
-                        } else if (which == 1) {
-                            castToTv(media.url);
-                        } else if (which == 2) {
-                            downloadMedia(media.url, false);
-                        } else if (which == 3) {
-                            downloadMedia(media.url, true);
-                        }
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) {
+                        mergeAndCastToTv();
+                    } else if (which == 1) {
+                        castToTv(media.url);
+                    } else if (which == 2) {
+                        downloadMedia(media.url, false);
+                    } else if (which == 3) {
+                        downloadMedia(media.url, true);
                     }
                 })
                 .show();
@@ -1156,8 +1658,8 @@ public class BrowserActivity extends Activity {
             if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
                 endpoint = "http://" + endpoint;
             }
-            if (!endpoint.contains(":8080")) {
-                endpoint = endpoint + ":8080";
+            if (!endpoint.contains(":8081")) {
+                endpoint = endpoint + ":8081";
             }
 
             String fullUrl = endpoint + "/?video=" + URLEncoder.encode(videoTrackUrl, "UTF-8") 
@@ -1167,22 +1669,12 @@ public class BrowserActivity extends Activity {
             client.newCall(req).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            Toast.makeText(BrowserActivity.this, "تعذر الإرسال للشاشة، تأكد من الاتصال", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                    runOnUiThread(() -> Toast.makeText(BrowserActivity.this, "تعذر الإرسال للشاشة، تأكد من الاتصال", Toast.LENGTH_SHORT).show());
                 }
 
                 @Override
                 public void onResponse(Call call, Response response) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            Toast.makeText(BrowserActivity.this, "تم بدء العرض المدمج في الشاشة بنجاح ✓", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                    runOnUiThread(() -> Toast.makeText(BrowserActivity.this, "تم بدء العرض المدمج في الشاشة بنجاح ✓", Toast.LENGTH_SHORT).show());
                 }
             });
         } catch (Exception e) {
@@ -1200,8 +1692,8 @@ public class BrowserActivity extends Activity {
             if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
                 endpoint = "http://" + endpoint;
             }
-            if (!endpoint.contains(":8080")) {
-                endpoint = endpoint + ":8080";
+            if (!endpoint.contains(":8081")) {
+                endpoint = endpoint + ":8081";
             }
 
             String fullUrl = endpoint + "/?url=" + URLEncoder.encode(mediaUrl, "UTF-8");
@@ -1209,22 +1701,12 @@ public class BrowserActivity extends Activity {
             client.newCall(req).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            Toast.makeText(BrowserActivity.this, "تعذر الإرسال للشاشة، تأكد من الـ IP", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                    runOnUiThread(() -> Toast.makeText(BrowserActivity.this, "تعذر الإرسال للشاشة، تأكد من الـ IP", Toast.LENGTH_SHORT).show());
                 }
 
                 @Override
                 public void onResponse(Call call, Response response) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            Toast.makeText(BrowserActivity.this, "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show();
-                        }
-                    });
+                    runOnUiThread(() -> Toast.makeText(BrowserActivity.this, "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show());
                 }
             });
         } catch (Exception e) {
@@ -1267,27 +1749,30 @@ public class BrowserActivity extends Activity {
     private void showSideMenu() {
         String[] menuItems = {
                 "🔄 تحديث الصفحة الحالية",
+                "🎯 فحص واستخراج الوسائط",
+                "⭐ إضافة الصفحة الحالية للمفضلة",
                 "📂 مجلد التنزيلات (Downloads)",
                 "➕ فتح علامة تبويب جديدة",
                 "🧹 مسح الكوكيز والبيانات المسجلة"
         };
         new AlertDialog.Builder(this)
                 .setTitle("القائمة الجانبية")
-                .setItems(menuItems, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        if (which == 0) {
-                            WebView current = getCurrentWebView();
-                            if (current != null) current.reload();
-                        } else if (which == 1) {
-                            openDownloadsFolder();
-                        } else if (which == 2) {
-                            addNewTab("about:home");
-                        } else if (which == 3) {
-                            CookieManager.getInstance().removeAllCookies(null);
-                            CookieManager.getInstance().flush();
-                            Toast.makeText(BrowserActivity.this, "تم مسح الكوكيز بنجاح ✓", Toast.LENGTH_SHORT).show();
-                        }
+                .setItems(menuItems, (dialog, which) -> {
+                    if (which == 0) {
+                        WebView current = getCurrentWebView();
+                        if (current != null) current.reload();
+                    } else if (which == 1) {
+                        triggerManualSniff();
+                    } else if (which == 2) {
+                        saveCurrentPageAsFavorite();
+                    } else if (which == 3) {
+                        openDownloadsFolder();
+                    } else if (which == 4) {
+                        addNewTab("about:home");
+                    } else if (which == 5) {
+                        CookieManager.getInstance().removeAllCookies(null);
+                        CookieManager.getInstance().flush();
+                        Toast.makeText(BrowserActivity.this, "تم مسح الكوكيز بنجاح ✓", Toast.LENGTH_SHORT).show();
                     }
                 })
                 .show();
@@ -1317,25 +1802,10 @@ public class BrowserActivity extends Activity {
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("علامات التبويب المفتوحة (" + tabList.size() + ")");
-        builder.setItems(titles, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                switchToTab(which);
-            }
-        });
-        builder.setPositiveButton("➕ علامة تبويب جديدة", new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                addNewTab("about:home");
-            }
-        });
+        builder.setItems(titles, (dialog, which) -> switchToTab(which));
+        builder.setPositiveButton("➕ علامة تبويب جديدة", (dialog, which) -> addNewTab("about:home"));
         if (tabList.size() > 1) {
-            builder.setNegativeButton("✖ إغلاق التبويب الحالي", new DialogInterface.OnClickListener() {
-                @Override
-                public void onClick(DialogInterface dialog, int which) {
-                    closeCurrentTab();
-                }
-            });
+            builder.setNegativeButton("✖ إغلاق التبويب الحالي", (dialog, which) -> closeCurrentTab());
         }
         builder.show();
     }
@@ -1362,6 +1832,10 @@ public class BrowserActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        tvIp = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE).getString("tv_ip", "").trim();
+        refreshReceiverStatus();
+        receiverStatusHandler.removeCallbacks(receiverStatusRunnable);
+        receiverStatusHandler.postDelayed(receiverStatusRunnable, 7000);
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
                 wakeLock.release();
@@ -1371,6 +1845,7 @@ public class BrowserActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        receiverStatusHandler.removeCallbacks(receiverStatusRunnable);
         super.onDestroy();
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
@@ -1396,4 +1871,4 @@ public class BrowserActivity extends Activity {
             super.onBackPressed();
         }
     }
-}
+    }
