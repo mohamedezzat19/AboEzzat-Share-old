@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         // Separate package so Classic and Share New install side by side.
-        applicationId "com.aboezzat.share.legacy"
+        applicationId "com.aboezzat.share.old"
         minSdk 21
         targetSdk 34
         versionCode ciVersionCode
