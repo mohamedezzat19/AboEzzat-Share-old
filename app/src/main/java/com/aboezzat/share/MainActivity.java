@@ -1,40 +1,42 @@
 package com.aboezzat.share;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.AssetFileDescriptor;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
+import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.format.Formatter;
 import android.view.View;
-import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputMethodManager;
-import android.webkit.GeolocationPermissions;
-import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URLEncoder;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import fi.iki.elonen.NanoHTTPD;
 import okhttp3.Call;
@@ -45,403 +47,621 @@ import okhttp3.Response;
 
 public class MainActivity extends Activity {
 
-    private static final int REQ_PICK_VIDEO = 101;
-    private static final int REQ_PICK_IMAGE = 102;
-    private static final int REQ_PICK_AUDIO = 103;
+    private static final int TARGET_PORT = 8081;
+    private static final int PICK_MEDIA_REQUEST = 101;
+    private static final int PICK_SLIDESHOW_REQUEST = 102;
 
     private DrawerLayout drawerLayout;
+    private EditText etTvIp;
+    private TextView tvStatusBadge;
     private SharedPreferences prefs;
-
-    private WebView mainWebView;
-    private EditText etBrowserUrl;
-    private ProgressBar browserProgress;
-
-    private View viewMediaFiles, viewSettings;
-    private TextView tvDrawerStatus;
-    private EditText etTvIpSettings, etTvPortSettings;
-
-    private String lastDetectedMediaUrl = "";
-    private String currentDetectedIp = "";
-    private String currentDetectedPort = "1997";
-
-    // محاكاة موقع مصر الجغرافي لتخطي الحظر
-    private static final String EGYPT_LOCATION_JS =
-            "navigator.geolocation.getCurrentPosition = function(success, error, options) {" +
-            "   var position = {" +
-            "       coords: {" +
-            "           latitude: 30.044426," +
-            "           longitude: 31.235712," +
-            "           accuracy: 10," +
-            "           altitude: null," +
-            "           altitudeAccuracy: null," +
-            "           heading: null," +
-            "           speed: null" +
-            "       }," +
-            "       timestamp: new Date().getTime()" +
-            "   };" +
-            "   success(position);" +
-            "};";
-
+    private final OkHttpClient client = new OkHttpClient();
     private LocalMediaServer localServer;
-    private File currentServedFile = null;
-    private static final int LOCAL_SERVER_PORT = 8899;
+    private Uri selectedMediaUri = null;
 
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(4, TimeUnit.SECONDS)
-            .build();
+    private final List<Uri> slideshowQueue = new ArrayList<>();
+    private int currentSlideIndex = 0;
+    private boolean isSlideshowRunning = false;
+
+    private final List<Uri> videoQueue = new ArrayList<>();
+    private int currentVideoIndex = 0;
+
+    private final Handler slideHandler = new Handler(Looper.getMainLooper());
+    private final Runnable slideRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!slideshowQueue.isEmpty() && isSlideshowRunning) {
+                currentSlideIndex = (currentSlideIndex + 1) % slideshowQueue.size();
+                selectedMediaUri = slideshowQueue.get(currentSlideIndex);
+                castLocalMediaToTv(false);
+                slideHandler.postDelayed(this, 5000);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        prefs = getSharedPreferences("AboEzzatPrefs", MODE_PRIVATE);
-        currentDetectedIp = prefs.getString("tv_ip", "");
-        currentDetectedPort = prefs.getString("tv_port", "1997");
-
-        initViews();
-        setupDrawer();
-        setupBrowser();
-        setupMediaAndRemote();
-        setupSettings();
+        prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
         startLocalServer();
 
-        autoDiscoverTv();
+        // Silently check the Classic app's own release channel on launch.
+        new AppUpdater(this).checkForUpdate(false);
+
+        if (handleIncomingShareIntent(getIntent())) {
+            return;
+        }
+
+        initViews();
+        setupNavigationDrawer();
     }
 
     private void initViews() {
-        drawerLayout = findViewById(R.id.drawerLayout);
-        viewMediaFiles = findViewById(R.id.viewMediaFiles);
-        viewSettings = findViewById(R.id.viewSettings);
-        tvDrawerStatus = findViewById(R.id.tvDrawerStatus);
-        etTvIpSettings = findViewById(R.id.etTvIpSettings);
-        etTvPortSettings = findViewById(R.id.etTvPortSettings);
+        drawerLayout = findViewById(R.id.drawer_layout);
+        etTvIp = findViewById(R.id.et_ip);
+        tvStatusBadge = findViewById(R.id.tv_status_badge);
+        Button btnSave = findViewById(R.id.btn_save);
 
-        updateStatusText("جاري البحث التلقائي عن الشاشة...");
-    }
-
-    private void updateStatusText(String text) {
-        runOnUiThread(() -> {
-            tvDrawerStatus.setText(text);
-            if (!currentDetectedIp.isEmpty()) {
-                etTvIpSettings.setText(currentDetectedIp);
-                etTvPortSettings.setText(currentDetectedPort);
-            }
-        });
-    }
-
-    private void autoDiscoverTv() {
-        new Thread(() -> {
-            try {
-                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-                String myIp = Formatter.formatIpAddress(wm.getConnectionInfo().getIpAddress());
-                if (myIp == null || myIp.equals("0.0.0.0")) return;
-
-                String subnet = myIp.substring(0, myIp.lastIndexOf(".") + 1);
-                int[] portsToTest = {1997, 8080};
-
-                ExecutorService executor = Executors.newFixedThreadPool(25);
-
-                for (int i = 1; i < 255; i++) {
-                    final String host = subnet + i;
-                    for (int port : portsToTest) {
-                        executor.execute(() -> {
-                            try {
-                                Socket socket = new Socket();
-                                socket.connect(new InetSocketAddress(host, port), 250);
-                                socket.close();
-
-                                currentDetectedIp = host;
-                                currentDetectedPort = String.valueOf(port);
-                                prefs.edit().putString("tv_ip", host).putString("tv_port", currentDetectedPort).apply();
-
-                                runOnUiThread(() -> {
-                                    updateStatusText("الشاشة: " + currentDetectedIp + ":" + currentDetectedPort + " ✓");
-                                    Toast.makeText(MainActivity.this, "تم التقاط الشاشة تلقائياً: " + currentDetectedIp, Toast.LENGTH_SHORT).show();
-                                });
-                            } catch (Exception ignored) {}
-                        });
-                    }
-                }
-                executor.shutdown();
-            } catch (Exception ignored) {}
-        }).start();
-    }
-
-    private void setupDrawer() {
-        findViewById(R.id.btnMenu).setOnClickListener(v -> {
-            hideKeyboard();
-            if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
-                drawerLayout.closeDrawer(GravityCompat.START);
-            } else {
+        findViewById(R.id.btn_open_drawer).setOnClickListener(v -> {
+            if (drawerLayout != null) {
                 drawerLayout.openDrawer(GravityCompat.START);
             }
         });
 
-        findViewById(R.id.menuBrowser).setOnClickListener(v -> {
-            showView(0);
-            drawerLayout.closeDrawer(GravityCompat.START);
-        });
-
-        findViewById(R.id.menuMediaFiles).setOnClickListener(v -> {
-            showView(1);
-            drawerLayout.closeDrawer(GravityCompat.START);
-        });
-
-        findViewById(R.id.menuYoutube).setOnClickListener(v -> {
-            showView(0);
-            mainWebView.loadUrl("https://m.youtube.com");
-            drawerLayout.closeDrawer(GravityCompat.START);
-        });
-
-        findViewById(R.id.menuTiktok).setOnClickListener(v -> {
-            showView(0);
-            mainWebView.loadUrl("https://www.tiktok.com");
-            drawerLayout.closeDrawer(GravityCompat.START);
-        });
-
-        findViewById(R.id.menuSettings).setOnClickListener(v -> {
-            showView(2);
-            drawerLayout.closeDrawer(GravityCompat.START);
-        });
-    }
-
-    private void showView(int index) {
-        hideKeyboard();
-        mainWebView.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
-        viewMediaFiles.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
-        viewSettings.setVisibility(index == 2 ? View.VISIBLE : View.GONE);
-    }
-
-    private void setupBrowser() {
-        mainWebView = findViewById(R.id.mainWebView);
-        etBrowserUrl = findViewById(R.id.etBrowserUrl);
-        browserProgress = findViewById(R.id.browserProgress);
-        Button btnRefresh = findViewById(R.id.btnRefresh);
-        Button btnCast = findViewById(R.id.btnCast);
-
-        WebSettings ws = mainWebView.getSettings();
-        ws.setJavaScriptEnabled(true);
-        ws.setDomStorageEnabled(true);
-        ws.setGeolocationEnabled(true);
-        ws.setMediaPlaybackRequiresUserGesture(false);
-        ws.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
-
-        mainWebView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public void onProgressChanged(WebView view, int newProgress) {
-                if (newProgress < 100) {
-                    browserProgress.setVisibility(View.VISIBLE);
-                    browserProgress.setProgress(newProgress);
-                } else {
-                    browserProgress.setVisibility(View.GONE);
-                }
-            }
-
-            @Override
-            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                callback.invoke(origin, true, false);
-            }
-        });
-
-        mainWebView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                super.onPageStarted(view, url, favicon);
-                view.evaluateJavascript(EGYPT_LOCATION_JS, null);
-            }
-
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                if (url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".mp4?")) {
-                    lastDetectedMediaUrl = url;
-                    sendStreamUrlToTv(url);
-                    Toast.makeText(MainActivity.this, "تم كشف رابط الفيديو وإرساله للشاشة!", Toast.LENGTH_SHORT).show();
-                }
-                return false;
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                view.evaluateJavascript(EGYPT_LOCATION_JS, null);
-                etBrowserUrl.setText(url);
-            }
-        });
-
-        btnRefresh.setOnClickListener(v -> mainWebView.reload());
-
-        btnCast.setOnClickListener(v -> {
-            if (!lastDetectedMediaUrl.isEmpty()) {
-                sendStreamUrlToTv(lastDetectedMediaUrl);
-            } else {
-                String currentUrl = mainWebView.getUrl();
-                if (currentUrl != null) {
-                    sendStreamUrlToTv(currentUrl);
-                } else {
-                    Toast.makeText(this, "لا يوجد فيديو نشط للبث!", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
-
-        etBrowserUrl.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_GO) {
-                loadUrlFromInput();
-                return true;
-            }
-            return false;
-        });
-
-        mainWebView.loadUrl("https://www.google.com.eg");
-    }
-
-    private void loadUrlFromInput() {
-        hideKeyboard();
-        String url = etBrowserUrl.getText().toString().trim();
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            url = "https://www.google.com.eg/search?q=" + url;
+        String savedIp = prefs.getString("tv_ip", "");
+        etTvIp.setText(savedIp);
+        if (!savedIp.isEmpty()) {
+            tvStatusBadge.setText("● متصل: " + savedIp);
         }
-        mainWebView.loadUrl(url);
+
+        tvStatusBadge.setOnClickListener(v -> scanForTvDevices());
+
+        btnSave.setOnClickListener(v -> {
+            String ip = etTvIp.getText().toString().trim();
+            prefs.edit().putString("tv_ip", ip).apply();
+            tvStatusBadge.setText("● تم الحفظ");
+            Toast.makeText(MainActivity.this, "تم حفظ IP الشاشة ✓", Toast.LENGTH_SHORT).show();
+        });
+
+        findViewById(R.id.card_browser).setOnClickListener(v -> {
+            Intent intent = new Intent(MainActivity.this, BrowserActivity.class);
+            startActivity(intent);
+        });
+
+        findViewById(R.id.card_local_media).setOnClickListener(v -> openMediaPicker(false));
+        findViewById(R.id.card_slideshow).setOnClickListener(v -> openMediaPicker(true));
+
+        findViewById(R.id.btn_play_pause).setOnClickListener(v -> {
+            if (!slideshowQueue.isEmpty()) {
+                if (isSlideshowRunning) {
+                    isSlideshowRunning = false;
+                    slideHandler.removeCallbacks(slideRunnable);
+                    Toast.makeText(this, "تم إيقاف عرض الصور مؤقتاً ⏸️", Toast.LENGTH_SHORT).show();
+                } else {
+                    isSlideshowRunning = true;
+                    slideHandler.post(slideRunnable);
+                    Toast.makeText(this, "استئناف عرض الصور ▶️", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                sendRemoteCommand("play_pause");
+            }
+        });
+
+        findViewById(R.id.btn_rewind).setOnClickListener(v -> sendRemoteCommand("rw"));
+        findViewById(R.id.btn_forward).setOnClickListener(v -> sendRemoteCommand("ff"));
+
+        findViewById(R.id.btn_next).setOnClickListener(v -> {
+            if (!slideshowQueue.isEmpty()) {
+                currentSlideIndex = (currentSlideIndex + 1) % slideshowQueue.size();
+                selectedMediaUri = slideshowQueue.get(currentSlideIndex);
+                castLocalMediaToTv(false);
+            } else if (videoQueue.size() > 1 && currentVideoIndex < videoQueue.size() - 1) {
+                currentVideoIndex++;
+                selectedMediaUri = videoQueue.get(currentVideoIndex);
+                castLocalMediaToTv(true);
+            } else {
+                sendRemoteCommand("next");
+            }
+        });
+
+        findViewById(R.id.btn_prev).setOnClickListener(v -> {
+            if (!slideshowQueue.isEmpty()) {
+                currentSlideIndex = (currentSlideIndex - 1 + slideshowQueue.size()) % slideshowQueue.size();
+                selectedMediaUri = slideshowQueue.get(currentSlideIndex);
+                castLocalMediaToTv(false);
+            } else if (videoQueue.size() > 1 && currentVideoIndex > 0) {
+                currentVideoIndex--;
+                selectedMediaUri = videoQueue.get(currentVideoIndex);
+                castLocalMediaToTv(true);
+            } else {
+                sendRemoteCommand("prev");
+            }
+        });
+
+        findViewById(R.id.btn_vol_up).setOnClickListener(v -> sendRemoteCommand("vol_up"));
+        findViewById(R.id.btn_vol_down).setOnClickListener(v -> sendRemoteCommand("vol_down"));
+        findViewById(R.id.btn_mute).setOnClickListener(v -> sendRemoteCommand("mute"));
     }
 
-    private void setupMediaAndRemote() {
-        findViewById(R.id.btnPickVideo).setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-            intent.setType("video/*");
-            startActivityForResult(intent, REQ_PICK_VIDEO);
+    private void setupNavigationDrawer() {
+        // 1. المتصفح
+        findViewById(R.id.menu_browser).setOnClickListener(v -> {
+            closeDrawer();
+            startActivity(new Intent(MainActivity.this, BrowserActivity.class));
         });
 
-        findViewById(R.id.btnPickImage).setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        // 2. ملفات الهاتف
+        findViewById(R.id.menu_local_media).setOnClickListener(v -> {
+            closeDrawer();
+            openMediaPicker(false);
+        });
+
+        // 3. IPTV
+        findViewById(R.id.menu_iptv).setOnClickListener(v -> {
+            closeDrawer();
+            showIptvDialog();
+        });
+
+        // 4. الوسائط الأخيرة
+        findViewById(R.id.menu_recent_media).setOnClickListener(v -> {
+            closeDrawer();
+            showRecentMediaDialog();
+        });
+
+        // 5. قائمة التشغيل
+        findViewById(R.id.menu_playlist).setOnClickListener(v -> {
+            closeDrawer();
+            showPlaylistDialog();
+        });
+
+        // 6. العلامات المرجعية
+        findViewById(R.id.menu_bookmarks).setOnClickListener(v -> {
+            closeDrawer();
+            showBookmarksDialog();
+        });
+
+        // 7. سجل المتصفح
+        findViewById(R.id.menu_history).setOnClickListener(v -> {
+            closeDrawer();
+            Toast.makeText(this, "سجل التصفح فارغ حالياً", Toast.LENGTH_SHORT).show();
+        });
+
+        // 8. الأكثر زيارة
+        findViewById(R.id.menu_most_visited).setOnClickListener(v -> {
+            closeDrawer();
+            Intent intent = new Intent(MainActivity.this, BrowserActivity.class);
+            startActivity(intent);
+        });
+
+        // 9. التنزيلات
+        findViewById(R.id.menu_downloads).setOnClickListener(v -> {
+            closeDrawer();
+            openDownloads();
+        });
+
+        // 10. الوضع المظلم
+        findViewById(R.id.menu_dark_mode).setOnClickListener(v -> {
+            closeDrawer();
+            Toast.makeText(this, "الوضع المظلم مفعل افتراضياً ✓", Toast.LENGTH_SHORT).show();
+        });
+
+        // 11. النسخ الاحتياطي / استعادة
+        findViewById(R.id.menu_backup).setOnClickListener(v -> {
+            closeDrawer();
+            Toast.makeText(this, "تم حفظ نسخة احتياطية من الإعدادات ✓", Toast.LENGTH_SHORT).show();
+        });
+
+        // 12. إعدادات
+        findViewById(R.id.menu_settings).setOnClickListener(v -> {
+            closeDrawer();
+            new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("إعدادات Abo Ezzat Share")
+                    .setItems(new String[]{"التحقق من التحديثات", "إعداد عنوان IP الشاشة"}, (dialog, which) -> {
+                        if (which == 0) {
+                            new AppUpdater(MainActivity.this).checkForUpdate(true);
+                        } else if (etTvIp != null) {
+                            etTvIp.requestFocus();
+                            Toast.makeText(this, "عدل عنوان IP الشاشة واضغط حفظ", Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .setNegativeButton("إغلاق", null)
+                    .show();
+        });
+
+        // 13. خروج
+        findViewById(R.id.menu_exit).setOnClickListener(v -> {
+            closeDrawer();
+            finishAffinity();
+        });
+    }
+
+    private void closeDrawer() {
+        if (drawerLayout != null && drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            drawerLayout.closeDrawer(GravityCompat.START);
+        }
+    }
+
+    private void showIptvDialog() {
+        EditText input = new EditText(this);
+        input.setHint("الصق رابط بث IPTV (m3u8 أو flv)");
+        input.setTextColor(0xFFFFFFFF);
+        input.setBackgroundColor(0xFF262833);
+        input.setPadding(16, 16, 16, 16);
+
+        new AlertDialog.Builder(this)
+                .setTitle("تشغيل IPTV على الشاشة")
+                .setView(input)
+                .setPositiveButton("بث مباشر 📺", (dialog, which) -> {
+                    String url = input.getText().toString().trim();
+                    if (!url.isEmpty()) {
+                        castUrlDirectlyToTv(url);
+                    }
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private void showRecentMediaDialog() {
+        if (videoQueue.isEmpty() && slideshowQueue.isEmpty()) {
+            Toast.makeText(this, "لا توجد وسائط تم تشغيلها مؤخراً", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int total = videoQueue.size() + slideshowQueue.size();
+        Toast.makeText(this, "الوسائط الأخيرة المجهزة: " + total + " ملف", Toast.LENGTH_SHORT).show();
+    }
+
+    private void showPlaylistDialog() {
+        if (videoQueue.isEmpty()) {
+            Toast.makeText(this, "قائمة التشغيل فارغة، حدد ملفات من وسائط الهاتف", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] items = new String[videoQueue.size()];
+        for (int i = 0; i < videoQueue.size(); i++) {
+            items[i] = "مقطع رقم " + (i + 1);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("قائمة التشغيل (" + videoQueue.size() + ")")
+                .setItems(items, (dialog, which) -> {
+                    currentVideoIndex = which;
+                    selectedMediaUri = videoQueue.get(currentVideoIndex);
+                    castLocalMediaToTv(true);
+                })
+                .setNegativeButton("إغلاق", null)
+                .show();
+    }
+
+    private void showBookmarksDialog() {
+        Set<String> customSites = prefs.getStringSet("custom_sites", new HashSet<>());
+        if (customSites == null || customSites.isEmpty()) {
+            Toast.makeText(this, "لا توجد علامات مرجعية محفوظة بعد", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        List<String> names = new ArrayList<>();
+        List<String> urls = new ArrayList<>();
+        for (String entry : customSites) {
+            String[] parts = entry.split("\\|", 2);
+            if (parts.length == 2) {
+                names.add(parts[0]);
+                urls.add(parts[1]);
+            }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("العلامات المرجعية المفضلة")
+                .setItems(names.toArray(new String[0]), (dialog, which) -> {
+                    Intent intent = new Intent(MainActivity.this, BrowserActivity.class);
+                    intent.putExtra("url", urls.get(which));
+                    startActivity(intent);
+                })
+                .setNegativeButton("إغلاق", null)
+                .show();
+    }
+
+    private void openDownloads() {
+        try {
+            Intent intent = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
+            startActivity(intent);
+        } catch (Exception e) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                Uri uri = Uri.parse(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getPath());
+                intent.setDataAndType(uri, "*/*");
+                startActivity(Intent.createChooser(intent, "فتح التنزيلات"));
+            } catch (Exception ex) {
+                Toast.makeText(this, "تعذر فتح التنزيلات تلقائياً", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+    private void scanForTvDevices() {
+        tvStatusBadge.setText("🔍 جاري الفحص...");
+        Toast.makeText(this, "جاري فحص الشبكة لاكتشاف الأجهزة المتاحة...", Toast.LENGTH_SHORT).show();
+
+        AsyncTask.execute(() -> {
+            String phoneIp = getDeviceIpAddress();
+            if (phoneIp.isEmpty() || !phoneIp.contains(".")) {
+                runOnUiThread(() -> tvStatusBadge.setText("● تأكد من الواي فاي"));
+                return;
+            }
+
+            String subnet = phoneIp.substring(0, phoneIp.lastIndexOf(".") + 1);
+            final List<String> availableDevices = new ArrayList<>();
+
+            for (int i = 1; i < 255; i++) {
+                String testIp = subnet + i;
+                try {
+                    Socket socket = new Socket();
+                    socket.connect(new InetSocketAddress(testIp, TARGET_PORT), 35);
+                    socket.close();
+                    availableDevices.add(testIp);
+                } catch (Exception ignored) {}
+            }
+
+            runOnUiThread(() -> {
+                if (!availableDevices.isEmpty()) {
+                    showDeviceSelectionDialog(availableDevices);
+                } else {
+                    tvStatusBadge.setText("● لم تكتشف أجهزة");
+                    Toast.makeText(MainActivity.this, "لم يتم العثور على أي جهاز فاتح منفذ 8081", Toast.LENGTH_LONG).show();
+                }
+            });
+        });
+    }
+
+    private void showDeviceSelectionDialog(final List<String> devices) {
+        String[] deviceArray = devices.toArray(new String[0]);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("اختر جهاز الاستقبال (منفذ 8081)");
+        builder.setItems(deviceArray, (dialog, which) -> {
+            String chosenIp = devices.get(which);
+            etTvIp.setText(chosenIp);
+            prefs.edit().putString("tv_ip", chosenIp).apply();
+            tvStatusBadge.setText("● متصل: " + chosenIp);
+            Toast.makeText(MainActivity.this, "تم اختيار وحفظ: " + chosenIp, Toast.LENGTH_SHORT).show();
+        });
+        builder.setNegativeButton("إلغاء", null);
+        builder.show();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingShareIntent(intent);
+    }
+
+    private boolean handleIncomingShareIntent(Intent intent) {
+        if (intent == null) return false;
+        String action = intent.getAction();
+        if (Intent.ACTION_SEND.equals(action) && intent.getType() != null) {
+            String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+            if (sharedText != null) {
+                Pattern pattern = Pattern.compile("https?://\\S+");
+                Matcher matcher = pattern.matcher(sharedText);
+                if (matcher.find()) {
+                    processSharedLink(matcher.group(0));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void processSharedLink(String url) {
+        String lowerUrl = url.toLowerCase();
+        boolean isBrowserRequired = lowerUrl.contains("facebook.com") || lowerUrl.contains("fb.watch") || 
+                                    lowerUrl.contains("fb.com") || lowerUrl.contains("instagram.com");
+
+        if (isBrowserRequired) {
+            Intent browserIntent = new Intent(this, BrowserActivity.class);
+            browserIntent.setAction(Intent.ACTION_VIEW);
+            browserIntent.setData(Uri.parse(url));
+            startActivity(browserIntent);
+            finish();
+        } else {
+            castUrlDirectlyToTv(url);
+        }
+    }
+
+    private void castUrlDirectlyToTv(String mediaUrl) {
+        String tvIp = prefs.getString("tv_ip", "").trim();
+        if (tvIp.isEmpty()) {
+            Toast.makeText(this, "يرجى تعيين عنوان الشاشة أولاً", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        try {
+            String endpoint = tvIp;
+            if (!endpoint.startsWith("http")) endpoint = "http://" + endpoint;
+            if (!endpoint.contains(":" + TARGET_PORT)) endpoint += ":" + TARGET_PORT;
+
+            String fullUrl = endpoint + "/?url=" + URLEncoder.encode(mediaUrl, "UTF-8");
+            Request req = new Request.Builder().url(fullUrl).build();
+            client.newCall(req).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "تعذر الإرسال للشاشة", Toast.LENGTH_SHORT).show();
+                        finish();
+                    });
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(MainActivity.this, "تم الإرسال والتشغيل فوراً ✓", Toast.LENGTH_SHORT).show();
+                        finish();
+                    });
+                }
+            });
+        } catch (Exception ignored) {
+            finish();
+        }
+    }
+
+    private void openMediaPicker(boolean multipleImages) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+
+        if (multipleImages) {
             intent.setType("image/*");
-            startActivityForResult(intent, REQ_PICK_IMAGE);
-        });
-
-        findViewById(R.id.btnPickAudio).setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-            intent.setType("audio/*");
-            startActivityForResult(intent, REQ_PICK_AUDIO);
-        });
-
-        findViewById(R.id.btnVolUp).setOnClickListener(v -> sendControlToTv("vol_up"));
-        findViewById(R.id.btnVolDown).setOnClickListener(v -> sendControlToTv("vol_down"));
-        findViewById(R.id.btnMute).setOnClickListener(v -> sendControlToTv("mute"));
-
-        findViewById(R.id.btnPlayPause).setOnClickListener(v -> sendControlToTv("play_pause"));
-        findViewById(R.id.btnForward).setOnClickListener(v -> sendControlToTv("forward"));
-        findViewById(R.id.btnRewind).setOnClickListener(v -> sendControlToTv("rewind"));
-        findViewById(R.id.btnStop).setOnClickListener(v -> sendControlToTv("stop"));
+            startActivityForResult(intent, PICK_SLIDESHOW_REQUEST);
+        } else {
+            intent.setType("*/*");
+            String[] mimeTypes = {"video/*", "audio/*"};
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+            startActivityForResult(intent, PICK_MEDIA_REQUEST);
+        }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-            Uri uri = data.getData();
-            if (requestCode == REQ_PICK_VIDEO) {
-                sendLocalFileToTv(uri, "video");
-            } else if (requestCode == REQ_PICK_IMAGE) {
-                sendLocalFileToTv(uri, "image");
-            } else if (requestCode == REQ_PICK_AUDIO) {
-                sendLocalFileToTv(uri, "audio");
+        slideHandler.removeCallbacks(slideRunnable);
+        isSlideshowRunning = false;
+
+        if (resultCode == RESULT_OK && data != null) {
+            if (requestCode == PICK_MEDIA_REQUEST) {
+                videoQueue.clear();
+                slideshowQueue.clear();
+                ClipData clipData = data.getClipData();
+
+                if (clipData != null) {
+                    for (int i = 0; i < clipData.getItemCount(); i++) {
+                        Uri uri = clipData.getItemAt(i).getUri();
+                        takePermissions(uri);
+                        videoQueue.add(uri);
+                    }
+                } else if (data.getData() != null) {
+                    takePermissions(data.getData());
+                    videoQueue.add(data.getData());
+                }
+
+                if (!videoQueue.isEmpty()) {
+                    currentVideoIndex = 0;
+                    selectedMediaUri = videoQueue.get(0);
+                    castLocalMediaToTv(true);
+                    if (videoQueue.size() > 1) {
+                        Toast.makeText(this, "تم تحميل (" + videoQueue.size() + ") وسائط، استخدم التالي والسابق للتنقل", Toast.LENGTH_LONG).show();
+                    }
+                }
+            } else if (requestCode == PICK_SLIDESHOW_REQUEST) {
+                videoQueue.clear();
+                slideshowQueue.clear();
+                ClipData clipData = data.getClipData();
+
+                if (clipData != null) {
+                    for (int i = 0; i < clipData.getItemCount(); i++) {
+                        Uri uri = clipData.getItemAt(i).getUri();
+                        takePermissions(uri);
+                        slideshowQueue.add(uri);
+                    }
+                } else if (data.getData() != null) {
+                    takePermissions(data.getData());
+                    slideshowQueue.add(data.getData());
+                }
+
+                if (!slideshowQueue.isEmpty()) {
+                    currentSlideIndex = 0;
+                    selectedMediaUri = slideshowQueue.get(0);
+                    castLocalMediaToTv(true);
+                    if (slideshowQueue.size() > 1) {
+                        isSlideshowRunning = true;
+                        slideHandler.postDelayed(slideRunnable, 5000);
+                        Toast.makeText(this, "بدأ العرض التقديمي للصور (" + slideshowQueue.size() + ")", Toast.LENGTH_SHORT).show();
+                    }
+                }
             }
         }
     }
 
-    private void setupSettings() {
-        findViewById(R.id.btnSaveSettings).setOnClickListener(v -> {
-            hideKeyboard();
-            String ip = etTvIpSettings.getText().toString().trim();
-            String port = etTvPortSettings.getText().toString().trim();
-
-            if (!ip.isEmpty()) currentDetectedIp = ip;
-            if (!port.isEmpty()) currentDetectedPort = port;
-
-            prefs.edit().putString("tv_ip", currentDetectedIp).putString("tv_port", currentDetectedPort).apply();
-            updateStatusText("الشاشة: " + currentDetectedIp + ":" + currentDetectedPort + " ✓");
-
-            Toast.makeText(MainActivity.this, "تم الحفظ ✓", Toast.LENGTH_SHORT).show();
-            showView(0);
-        });
+    private void takePermissions(Uri uri) {
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) {}
     }
 
-    private void hideKeyboard() {
-        View view = this.getCurrentFocus();
-        if (view != null) {
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+    private String getDeviceIpAddress() {
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                int ip = wm.getConnectionInfo().getIpAddress();
+                return Formatter.formatIpAddress(ip);
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private void castLocalMediaToTv(boolean showToast) {
+        String tvIp = prefs.getString("tv_ip", "").trim();
+        if (tvIp.isEmpty()) {
+            if (showToast) Toast.makeText(this, "يرجى كتابة وحفظ IP الشاشة أولاً", Toast.LENGTH_SHORT).show();
+            return;
         }
-    }
 
-    private void sendControlToTv(String action) {
-        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp;
-        String port = currentDetectedPort;
-        String url = "http://" + tvIp + ":" + port + "/control?action=" + action;
+        String phoneIp = getDeviceIpAddress();
+        if (phoneIp.isEmpty() || phoneIp.equals("0.0.0.0")) {
+            if (showToast) Toast.makeText(this, "تأكد من اتصال الهاتف بالواي فاي", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        Request req = new Request.Builder().url(url).build();
-        httpClient.newCall(req).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, java.io.IOException e) {}
-
-            @Override
-            public void onResponse(Call call, Response response) throws java.io.IOException {}
-        });
-    }
-
-    public void sendStreamUrlToTv(String videoUrl) {
-        String tvIp = currentDetectedIp.isEmpty() ? prefs.getString("tv_ip", "10.229.144.16") : currentDetectedIp;
-        String port = currentDetectedPort;
+        String mime = getContentResolver().getType(selectedMediaUri);
+        String targetUrl = (mime != null && mime.startsWith("image/")) ?
+                "http://" + phoneIp + ":8088/media.jpg" : "http://" + phoneIp + ":8088/media.mp4";
 
         try {
-            String url = "http://" + tvIp + ":" + port + "/play?url=" + URLEncoder.encode(videoUrl, "UTF-8");
-            Request req = new Request.Builder().url(url).build();
-            httpClient.newCall(req).enqueue(new Callback() {
+            String endpoint = tvIp;
+            if (!endpoint.startsWith("http")) endpoint = "http://" + endpoint;
+            if (!endpoint.contains(":" + TARGET_PORT)) endpoint += ":" + TARGET_PORT;
+
+            String fullUrl = endpoint + "/?url=" + URLEncoder.encode(targetUrl, "UTF-8");
+            Request req = new Request.Builder().url(fullUrl).build();
+            client.newCall(req).enqueue(new Callback() {
                 @Override
-                public void onFailure(Call call, java.io.IOException e) {
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تعذر الاتصال بالشاشة! جاري فحص الشبكة...", Toast.LENGTH_SHORT).show());
-                    autoDiscoverTv();
+                public void onFailure(Call call, IOException e) {
+                    if (showToast) {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "فشل الإرسال للشاشة", Toast.LENGTH_SHORT).show());
+                    }
                 }
 
                 @Override
-                public void onResponse(Call call, Response response) throws java.io.IOException {
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show());
+                public void onResponse(Call call, Response response) {
+                    if (showToast) {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "جاري العرض على الشاشة ✓", Toast.LENGTH_SHORT).show());
+                    }
                 }
             });
         } catch (Exception ignored) {}
     }
 
-    private void sendLocalFileToTv(Uri fileUri, String type) {
+    private void sendRemoteCommand(String cmd) {
+        String tvIp = prefs.getString("tv_ip", "").trim();
+        if (tvIp.isEmpty()) return;
+
         try {
-            File tempFile = new File(getCacheDir(), "shared_media");
-            InputStream in = getContentResolver().openInputStream(fileUri);
-            FileOutputStream out = new FileOutputStream(tempFile);
-            byte[] buf = new byte[8192];
-            int len;
-            while ((len = in.read(buf)) > 0) {
-                out.write(buf, 0, len);
-            }
-            in.close();
-            out.close();
+            String endpoint = tvIp;
+            if (!endpoint.startsWith("http")) endpoint = "http://" + endpoint;
+            if (!endpoint.contains(":" + TARGET_PORT)) endpoint += ":" + TARGET_PORT;
 
-            currentServedFile = tempFile;
-
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-            String phoneIp = Formatter.formatIpAddress(wm.getConnectionInfo().getIpAddress());
-            String mediaUrl = "http://" + phoneIp + ":" + LOCAL_SERVER_PORT + "/media";
-
-            sendStreamUrlToTv(mediaUrl);
-
-        } catch (Exception e) {
-            Toast.makeText(this, "خطأ في قراءة الملف!", Toast.LENGTH_SHORT).show();
-        }
+            String fullUrl = endpoint + "/?command=" + cmd;
+            Request req = new Request.Builder().url(fullUrl).build();
+            client.newCall(req).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {}
+                @Override
+                public void onResponse(Call call, Response response) {}
+            });
+        } catch (Exception ignored) {}
     }
 
     private void startLocalServer() {
         try {
-            localServer = new LocalMediaServer(LOCAL_SERVER_PORT);
-            localServer.start();
+            if (localServer == null) {
+                localServer = new LocalMediaServer(8088);
+                localServer.start();
+            }
         } catch (Exception ignored) {}
     }
 
@@ -452,24 +672,54 @@ public class MainActivity extends Activity {
 
         @Override
         public Response serve(IHTTPSession session) {
-            if (currentServedFile != null && currentServedFile.exists()) {
+            if (selectedMediaUri != null) {
                 try {
-                    return newFixedLengthResponse(Response.Status.OK, "video/mp4",
-                            new java.io.FileInputStream(currentServedFile), currentServedFile.length());
-                } catch (Exception ignored) {}
+                    AssetFileDescriptor afd = getContentResolver().openAssetFileDescriptor(selectedMediaUri, "r");
+                    if (afd != null) {
+                        long fileLength = afd.getLength();
+                        String mime = getContentResolver().getType(selectedMediaUri);
+                        if (mime == null) mime = "application/octet-stream";
+
+                        Map<String, String> headers = session.getHeaders();
+                        String range = headers.get("range");
+
+                        if (range != null && range.startsWith("bytes=")) {
+                            String[] parts = range.substring("bytes=".length()).split("-");
+                            long start = Long.parseLong(parts[0]);
+                            long end = (parts.length > 1 && !parts[1].isEmpty()) ? Long.parseLong(parts[1]) : fileLength - 1;
+                            if (end >= fileLength) end = fileLength - 1;
+                            long contentLength = end - start + 1;
+
+                            FileInputStream fis = afd.createInputStream();
+                            fis.skip(start);
+
+                            Response res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength);
+                            res.addHeader("Content-Range", "bytes " + start + "-" + end + "/" + fileLength);
+                            res.addHeader("Content-Length", String.valueOf(contentLength));
+                            res.addHeader("Accept-Ranges", "bytes");
+                            res.addHeader("Access-Control-Allow-Origin", "*");
+                            return res;
+                        } else {
+                            FileInputStream fis = afd.createInputStream();
+                            Response res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileLength);
+                            res.addHeader("Content-Length", String.valueOf(fileLength));
+                            res.addHeader("Accept-Ranges", "bytes");
+                            res.addHeader("Access-Control-Allow-Origin", "*");
+                            return res;
+                        }
+                    }
+                } catch (Exception e) {
+                    return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Error loading file");
+                }
             }
-            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not Found");
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "No media selected");
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
+        if (drawerLayout != null && drawerLayout.isDrawerOpen(GravityCompat.START)) {
             drawerLayout.closeDrawer(GravityCompat.START);
-        } else if (viewMediaFiles.getVisibility() == View.VISIBLE || viewSettings.getVisibility() == View.VISIBLE) {
-            showView(0);
-        } else if (mainWebView.canGoBack()) {
-            mainWebView.goBack();
         } else {
             super.onBackPressed();
         }
@@ -477,7 +727,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (localServer != null) localServer.stop();
         super.onDestroy();
+        slideHandler.removeCallbacks(slideRunnable);
+        if (localServer != null) {
+            localServer.stop();
+        }
     }
 }

@@ -1076,7 +1076,7 @@ public class BrowserActivity extends Activity {
         }
     }
 
-        private synchronized void addCapturedMedia(String url, String title, String format, String posterUrl, int mediaType) {
+    private synchronized void addCapturedMedia(String url, String title, String format, String posterUrl, int mediaType) {
         for (CapturedMedia item : capturedList) {
             if (item.url.equalsIgnoreCase(url) || (item.url.contains("manifest") && url.contains("manifest"))) {
                 if (item.posterUrl == null && posterUrl != null) {
@@ -1878,4 +1878,4 @@ public class BrowserActivity extends Activity {
             super.onBackPressed();
         }
     }
-    }
+}

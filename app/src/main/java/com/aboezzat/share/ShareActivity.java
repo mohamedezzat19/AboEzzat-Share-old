@@ -2,18 +2,10 @@ package com.aboezzat.share;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
-import android.net.ConnectivityManager;
-import android.net.LinkAddress;
-import android.net.LinkProperties;
-import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
-import android.os.Build;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -29,19 +21,9 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import java.io.IOException;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.Proxy;
-import java.net.Socket;
 import java.net.URLEncoder;
-import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -54,17 +36,9 @@ import org.json.JSONObject;
 
 public class ShareActivity extends Activity {
 
-    private static final int RECEIVER_PORT = 8081;
+    private static final int TARGET_PORT = 8081;
 
-    // عميل OkHttp يتجاوز أي بروكسي محلي نشط بالهاتف للتواصل مع الشاشة
-    private final OkHttpClient localClient = new OkHttpClient.Builder()
-            .proxy(Proxy.NO_PROXY)
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(8, TimeUnit.SECONDS)
-            .build();
-
-    // عميل OkHttp عادي للطلبات الخارجية (مثل tikwm)
-    private final OkHttpClient internetClient = new OkHttpClient.Builder()
+    private final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(12, TimeUnit.SECONDS)
             .build();
@@ -72,6 +46,7 @@ public class ShareActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WebView webView;
     private boolean isCaptured = false;
+    private String targetTvIp = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -97,48 +72,81 @@ public class ShareActivity extends Activity {
             if (sharedText != null) {
                 String extractedUrl = extractUrl(sharedText);
                 if (extractedUrl != null) {
-                    processUrl(extractedUrl);
+                    dispatchPlatformRoute(extractedUrl);
                     return;
                 }
             }
         }
+
+        if (Intent.ACTION_SEND_MULTIPLE.equals(action) && type != null) {
+            ArrayList<Uri> mediaUris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (mediaUris != null && !mediaUris.isEmpty()) {
+                sendMultipleMedia(mediaUris);
+                return;
+            }
+        }
+
         finish();
     }
 
     private String extractUrl(String text) {
         Pattern pattern = Pattern.compile("(https?://[\\w\\-\\.\\?\\=\\&\\%\\/\\#\\+]+)");
         Matcher matcher = pattern.matcher(text);
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
+        if (matcher.find()) return matcher.group(1);
         return null;
     }
 
-    private void processUrl(String url) {
-        if (url.contains("youtube.com") || url.contains("youtu.be")) {
-            dispatchMediaUrl(url);
+    private void dispatchPlatformRoute(String url) {
+        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
+        targetTvIp = prefs.getString("tv_ip", "").trim();
+
+        String lowerUrl = url.toLowerCase();
+
+        if (lowerUrl.contains("instagram.com")) {
+            Intent browserIntent = new Intent(this, BrowserActivity.class);
+            browserIntent.setAction(Intent.ACTION_VIEW);
+            browserIntent.setData(Uri.parse(url));
+            startActivity(browserIntent);
+            finish();
             return;
         }
 
-        if (url.contains("tiktok.com") && !url.contains("/live")) {
-            Toast.makeText(this, "جاري استخراج تيك توك...", Toast.LENGTH_SHORT).show();
-            extractTikTokVideo(url);
+        if (targetTvIp.isEmpty()) {
+            Toast.makeText(this, "يرجى تعيين عنوان IP الشاشة أولاً", Toast.LENGTH_LONG).show();
+            finish();
             return;
         }
 
-        Toast.makeText(this, "جاري قنص وتشغيل الفيديو...", Toast.LENGTH_SHORT).show();
-        startSniffing(url);
+        if (lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be")) {
+            sendToTv(targetTvIp, url, false);
+            return;
+        }
+
+        if (lowerUrl.contains("tiktok.com") && !lowerUrl.contains("/live") && !lowerUrl.contains("live.tiktok.com")) {
+            Toast.makeText(this, "جاري استخراج فيديو تيك توك...", Toast.LENGTH_SHORT).show();
+            handleTikTok(url);
+            return;
+        }
+
+        if (lowerUrl.contains("threads.net")) {
+            Toast.makeText(this, "جاري قنص ثريد للشاشة مباشرة...", Toast.LENGTH_SHORT).show();
+            startPlatformSniffer(url, "threads");
+            return;
+        }
+
+        Toast.makeText(this, "جاري قنص الفيديو للشاشة...", Toast.LENGTH_SHORT).show();
+        startPlatformSniffer(url, "generic");
     }
 
-    private void extractTikTokVideo(final String url) {
+    private void handleTikTok(final String url) {
         try {
             String apiUrl = "https://www.tikwm.com/api/?url=" + URLEncoder.encode(url, "UTF-8");
             Request request = new Request.Builder().url(apiUrl).build();
 
-            internetClient.newCall(request).enqueue(new Callback() {
+            client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
-                    mainHandler.post(() -> startSniffing(url));
+                    mainHandler.post(() -> startPlatformSniffer(url, "generic"));
                 }
 
                 @Override
@@ -151,21 +159,21 @@ public class ShareActivity extends Activity {
                             String play = data.optString("play");
                             if (!play.isEmpty()) {
                                 if (!play.startsWith("http")) play = "https://www.tikwm.com" + play;
-                                dispatchMediaUrl(play);
+                                sendToTv(targetTvIp, play, false);
                                 return;
                             }
                         }
                     } catch (Exception ignored) {}
-                    mainHandler.post(() -> startSniffing(url));
+                    mainHandler.post(() -> startPlatformSniffer(url, "generic"));
                 }
             });
         } catch (Exception e) {
-            startSniffing(url);
+            startPlatformSniffer(url, "generic");
         }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private void startSniffing(String url) {
+    private void startPlatformSniffer(String url, final String platformType) {
         isCaptured = false;
         webView = new WebView(this);
         WebSettings settings = webView.getSettings();
@@ -173,12 +181,13 @@ public class ShareActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
+
         settings.setUserAgentString("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36");
 
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void onMediaFound(String mediaUrl) {
-                checkAndSendMedia(mediaUrl);
+                checkAndSendMedia(mediaUrl, platformType);
             }
         }, "MediaSniffer");
 
@@ -186,7 +195,7 @@ public class ShareActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String reqUrl = request.getUrl().toString();
-                checkAndSendMedia(reqUrl);
+                checkAndSendMedia(reqUrl, platformType);
                 return super.shouldInterceptRequest(view, request);
             }
 
@@ -194,14 +203,17 @@ public class ShareActivity extends Activity {
             public void onPageFinished(WebView view, String loadedUrl) {
                 super.onPageFinished(view, loadedUrl);
                 String js = "(function() { " +
-                        "   var vids = document.getElementsByTagName('video'); " +
-                        "   for (var i = 0; i < vids.length; i++) { " +
-                        "       try { vids[i].play(); } catch(e){} " +
-                        "       var src = vids[i].currentSrc || vids[i].src; " +
-                        "       if (src && src.startsWith('http')) { " +
-                        "           window.MediaSniffer.onMediaFound(src); " +
+                        "   try { " +
+                        "       var vids = document.getElementsByTagName('video'); " +
+                        "       for (var i = 0; i < vids.length; i++) { " +
+                        "           vids[i].muted = true; " +
+                        "           vids[i].play(); " +
+                        "           var src = vids[i].currentSrc || vids[i].src; " +
+                        "           if (src && src.startsWith('http')) { " +
+                        "               window.MediaSniffer.onMediaFound(src); " +
+                        "           } " +
                         "       } " +
-                        "   } " +
+                        "   } catch(e){} " +
                         "})();";
                 view.evaluateJavascript(js, null);
             }
@@ -211,32 +223,43 @@ public class ShareActivity extends Activity {
 
         mainHandler.postDelayed(() -> {
             if (!isCaptured) {
-                Toast.makeText(ShareActivity.this, "تعذر قنص الفيديو تلقائياً", Toast.LENGTH_SHORT).show();
+                Toast.makeText(ShareActivity.this, "تعذر القنص المباشر، جرب فتحه بالمتصفح", Toast.LENGTH_SHORT).show();
                 destroyWebView();
                 finish();
             }
-        }, 18000);
+        }, 16000);
     }
 
-    private synchronized void checkAndSendMedia(String reqUrl) {
+    private synchronized void checkAndSendMedia(String reqUrl, String platformType) {
         if (isCaptured || reqUrl == null || reqUrl.isEmpty()) return;
 
         String lower = reqUrl.toLowerCase();
 
         if (lower.contains(".jpg") || lower.contains(".png") || lower.contains(".webp") ||
-            lower.contains(".js") || lower.contains(".css") || lower.contains("rsrc.php") ||
-            lower.contains("preview")) {
+                lower.contains(".js") || lower.contains(".css") || lower.contains("rsrc.php") ||
+                lower.contains("preview") || lower.contains(".ico")) {
             return;
         }
 
-        boolean isDirectVideo = (lower.contains(".mp4") && !lower.contains("bytestart=")) ||
-                                lower.contains("video_playback") ||
-                                lower.contains("&mime=video");
+        boolean matched = false;
 
-        if (isDirectVideo) {
+        if ("threads".equals(platformType)) {
+            if (lower.contains(".mp4") || lower.contains("video_playback") || (lower.contains("cdninstagram.com") && lower.contains("/v/"))) {
+                matched = true;
+            }
+        } else {
+            if ((lower.contains("pull-") && lower.contains("tiktokcdn.com")) ||
+                (lower.contains("tiktokcdn.com") && (lower.contains(".flv") || lower.contains(".m3u8"))) ||
+                lower.contains(".mp4") || lower.contains(".m3u8") ||
+                lower.contains("video_playback") || lower.contains("&mime=video")) {
+                matched = true;
+            }
+        }
+
+        if (matched) {
             isCaptured = true;
             mainHandler.post(() -> {
-                dispatchMediaUrl(reqUrl);
+                sendToTv(targetTvIp, reqUrl, false);
                 destroyWebView();
             });
         }
@@ -250,146 +273,24 @@ public class ShareActivity extends Activity {
         }
     }
 
-    private void dispatchMediaUrl(String mediaUrl) {
-        SharedPreferences prefs = getSharedPreferences("AboEzzatPrefs", MODE_PRIVATE);
-        String cachedIp = prefs.getString("last_tv_ip", "").trim();
-
-        Executors.newSingleThreadExecutor().execute(() -> {
-            if (!cachedIp.isEmpty() && isReceiverAlive(cachedIp, RECEIVER_PORT, 250)) {
-                sendToTv(cachedIp, mediaUrl);
-                return;
-            }
-
-            mainHandler.post(() -> Toast.makeText(this, "جاري فحص الشبكة واصطياد الريسيفر...", Toast.LENGTH_SHORT).show());
-            discoverReceiverAndSend(mediaUrl);
-        });
-    }
-
-    // فحص المنفذ بدون المرور بالبروكسي نهائياً
-    private boolean isReceiverAlive(String ip, int port, int timeoutMs) {
-        try (Socket socket = new Socket(Proxy.NO_PROXY)) {
-            socket.connect(new InetSocketAddress(ip, port), timeoutMs);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private void discoverReceiverAndSend(String mediaUrl) {
-        String subnet = getRealWifiSubnet();
-        if (subnet == null) {
-            mainHandler.post(() -> {
-                Toast.makeText(this, "تعذر قراءة عنوان شبكة الـ Wi-Fi الحقيقي!", Toast.LENGTH_LONG).show();
-                finish();
-            });
-            return;
-        }
-
-        ExecutorService pool = Executors.newFixedThreadPool(40);
-        AtomicBoolean found = new AtomicBoolean(false);
-
-        for (int i = 1; i <= 254; i++) {
-            final String host = subnet + "." + i;
-            pool.execute(() -> {
-                if (found.get()) return;
-
-                if (isReceiverAlive(host, RECEIVER_PORT, 250)) {
-                    if (found.compareAndSet(false, true)) {
-                        pool.shutdownNow();
-
-                        getSharedPreferences("AboEzzatPrefs", MODE_PRIVATE)
-                                .edit()
-                                .putString("last_tv_ip", host)
-                                .apply();
-
-                        sendToTv(host, mediaUrl);
-                    }
-                }
-            });
-        }
-
-        Executors.newSingleThreadExecutor().execute(() -> {
-            try {
-                pool.awaitTermination(3500, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException ignored) {}
-
-            if (!found.get()) {
-                mainHandler.post(() -> {
-                    Toast.makeText(this, "لم يتم العثور على ريسيفر أبو عزت في الشبكة!", Toast.LENGTH_LONG).show();
-                    finish();
-                });
-            }
-        });
-    }
-
-    // استخراج عنوان الشبكة الحقيقي متجاوزاً أي بروكسي أو VPN
-    private String getRealWifiSubnet() {
+    private void sendToTv(String tvIp, String mediaUrl, boolean isQueue) {
         try {
-            // المحاولة الأولى: قراءة واجهة wlan0 الحقيقية مباشرة
-            List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
-            for (NetworkInterface intf : interfaces) {
-                if (intf.getName().toLowerCase().contains("wlan")) {
-                    for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
-                        if (!addr.isLoopbackAddress() && addr instanceof Inet4Address) {
-                            String ip = addr.getHostAddress();
-                            if (ip != null && !ip.startsWith("127.")) {
-                                return ip.substring(0, ip.lastIndexOf('.'));
-                            }
-                        }
-                    }
-                }
+            if (!tvIp.startsWith("http://") && !tvIp.startsWith("https://")) {
+                tvIp = "http://" + tvIp;
+            }
+            if (!tvIp.contains(":" + TARGET_PORT)) {
+                tvIp = tvIp + ":" + TARGET_PORT;
             }
 
-            // المحاولة الثانية: عبر ConnectivityManager المخصص للـ Wi-Fi
-            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (cm != null) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    for (Network network : cm.getAllNetworks()) {
-                        NetworkCapabilities nc = cm.getNetworkCapabilities(network);
-                        if (nc != null && nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                            LinkProperties lp = cm.getLinkProperties(network);
-                            if (lp != null) {
-                                for (LinkAddress linkAddr : lp.getLinkAddresses()) {
-                                    InetAddress addr = linkAddr.getAddress();
-                                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
-                                        String ip = addr.getHostAddress();
-                                        if (ip != null) {
-                                            return ip.substring(0, ip.lastIndexOf('.'));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // المحاولة الثالثة: عبر WifiManager القياسي
-            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wm != null) {
-                WifiInfo info = wm.getConnectionInfo();
-                int ipInt = info.getIpAddress();
-                if (ipInt != 0) {
-                    return String.format("%d.%d.%d",
-                            (ipInt & 0xff),
-                            (ipInt >> 8 & 0xff),
-                            (ipInt >> 16 & 0xff));
-                }
-            }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    private void sendToTv(String ip, String mediaUrl) {
-        try {
-            String fullUrl = "http://" + ip + ":" + RECEIVER_PORT + "/?url=" + URLEncoder.encode(mediaUrl, "UTF-8");
+            String paramName = isQueue ? "queue" : "url";
+            String fullUrl = tvIp + "/?" + paramName + "=" + URLEncoder.encode(mediaUrl, "UTF-8");
             Request request = new Request.Builder().url(fullUrl).build();
 
-            localClient.newCall(request).enqueue(new Callback() {
+            client.newCall(request).enqueue(new Callback() {
                 @Override
                 public void onFailure(Call call, IOException e) {
                     mainHandler.post(() -> {
-                        Toast.makeText(ShareActivity.this, "تعذر إرسال البث للشاشة", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(ShareActivity.this, "تعذر الإرسال للشاشة", Toast.LENGTH_SHORT).show();
                         finish();
                     });
                 }
@@ -397,17 +298,32 @@ public class ShareActivity extends Activity {
                 @Override
                 public void onResponse(Call call, Response response) {
                     mainHandler.post(() -> {
-                        if (response.isSuccessful()) {
-                            Toast.makeText(ShareActivity.this, "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show();
-                        } else {
-                            Toast.makeText(ShareActivity.this, "الشاشة استقبلت لكن تعذر التشغيل", Toast.LENGTH_SHORT).show();
-                        }
+                        Toast.makeText(ShareActivity.this, isQueue ? "تمت الإضافة لقائمة التشغيل ✓" : "تم الإرسال والتشغيل بنجاح ✓", Toast.LENGTH_SHORT).show();
                         finish();
                     });
                 }
             });
         } catch (Exception e) {
             mainHandler.post(this::finish);
+        }
+    }
+
+    private void sendMultipleMedia(ArrayList<Uri> uris) {
+        SharedPreferences prefs = getSharedPreferences("AboEzzatSharePrefs", MODE_PRIVATE);
+        targetTvIp = prefs.getString("tv_ip", "").trim();
+
+        if (targetTvIp.isEmpty()) {
+            Toast.makeText(this, "يرجى تعيين عنوان IP الشاشة أولاً", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        Toast.makeText(this, "جاري إرسال قائمة الفيديوهات للشاشة...", Toast.LENGTH_SHORT).show();
+
+        for (int i = 0; i < uris.size(); i++) {
+            final boolean isQueue = (i > 0);
+            final String fileUrl = uris.get(i).toString();
+            mainHandler.postDelayed(() -> sendToTv(targetTvIp, fileUrl, isQueue), i * 350L);
         }
     }
 
