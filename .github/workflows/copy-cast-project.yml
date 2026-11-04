@@ -21,11 +21,13 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/mohamedezzat19/AboEzzat-Cast.git /tmp/AboEzzat-Cast
 
-      - name: Copy all source files (including binary assets)
+      - name: Copy source project while preserving target GitHub Actions workflows
         run: |
-          rsync -a --delete --exclude='.git' /tmp/AboEzzat-Cast/ "$GITHUB_WORKSPACE"/
+          # Keep the target's existing Actions workflows: GITHUB_TOKEN cannot
+          # update workflow files without the separate workflows permission.
+          rsync -a --delete --exclude='.git' --exclude='.github/workflows/' /tmp/AboEzzat-Cast/ "$GITHUB_WORKSPACE"/
 
-      - name: Commit and push complete copy
+      - name: Commit and push copied project
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -34,5 +36,5 @@ jobs:
             echo "No changes to copy."
             exit 0
           fi
-          git commit -m "Copy complete AboEzzat-Cast project into Share-old"
+          git commit -m "Copy AboEzzat-Cast project files into Share-old"
           git push origin HEAD:main
