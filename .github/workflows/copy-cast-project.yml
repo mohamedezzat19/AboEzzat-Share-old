@@ -1,0 +1,41 @@
+name: Copy AboEzzat-Cast into Share-old
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  copy-repository:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Clone source repository
+        run: |
+          git clone --depth 1 https://github.com/mohamedezzat19/AboEzzat-Cast.git /tmp/AboEzzat-Cast
+
+      - name: Copy all source files (including binary assets)
+        run: |
+          rsync -a --delete --exclude='.git' /tmp/AboEzzat-Cast/ "$GITHUB_WORKSPACE"/
+          rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Commit and push complete copy
+        run: |
+          git init
+          git checkout -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to copy."
+            exit 0
+          fi
+          git commit -m "Copy complete AboEzzat-Cast project into Share-old"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin main
