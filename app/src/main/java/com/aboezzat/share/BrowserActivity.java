@@ -1069,6 +1069,13 @@ public class BrowserActivity extends Activity {
             }
         }
 
+        @JavascriptInterface
+        public void onNewCustomSite(String name, String siteUrl) {
+            saveCustomSite(name, siteUrl);
+            runOnUiThread(() -> loadHomePage());
+        }
+    }
+
         private synchronized void addCapturedMedia(String url, String title, String format, String posterUrl, int mediaType) {
         for (CapturedMedia item : capturedList) {
             if (item.url.equalsIgnoreCase(url) || (item.url.contains("manifest") && url.contains("manifest"))) {
